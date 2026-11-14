@@ -5,6 +5,7 @@ const REPO_SHAPE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 /** owner/name; rejects '.' and '..' path segments. */
 export const REPO_RE = { test: (v: string) => REPO_SHAPE.test(v) && v.split('/').every((s) => s !== '.' && s !== '..') };
 const API = 'https://api.github.com';
+export const DEFAULT_TIMEOUT_MS = 10_000;
 
 export class SnapshotFailure extends Error {
   constructor(public error: SnapshotError) { super(error.message); }
@@ -14,6 +15,8 @@ export interface FetchDeps {
   fetch: typeof fetch;
   token?: string;
   now?: () => Date;
+  /** Per-request timeout (covers headers and body). Default 10 s. */
+  timeoutMs?: number;
 }
 
 function headers(token?: string): Record<string, string> {
@@ -28,13 +31,16 @@ function headers(token?: string): Record<string, string> {
 
 const fail = (code: SnapshotErrorCode, message: string, resetAt?: string) => new SnapshotFailure({ code, message, resetAt });
 
-async function getJson(deps: FetchDeps, path: string): Promise<{ body: unknown; rl?: { limit: number; remaining: number; reset: number } }> {
+async function getJson(deps: FetchDeps, path: string, cancel: AbortSignal): Promise<{ body: unknown; rl?: { limit: number; remaining: number; reset: number } }> {
+  const timeout = AbortSignal.timeout(deps.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+  const signal = AbortSignal.any([timeout, cancel]);
+  const aborted = () => fail(timeout.aborted ? 'timeout' : 'network', timeout.aborted ? 'GitHub request timed out' : 'request cancelled');
   let res: Response;
   try {
     // GET only: method is fixed here; there is no other call site to GitHub.
-    res = await deps.fetch(`${API}${path}`, { method: 'GET', headers: headers(deps.token) });
+    res = await deps.fetch(`${API}${path}`, { method: 'GET', headers: headers(deps.token), signal });
   } catch {
-    throw fail('network', 'could not reach GitHub');
+    throw signal.aborted ? aborted() : fail('network', 'could not reach GitHub');
   }
   const limit = Number(res.headers.get('x-ratelimit-limit'));
   const remaining = Number(res.headers.get('x-ratelimit-remaining'));
@@ -46,24 +52,31 @@ async function getJson(deps: FetchDeps, path: string): Promise<{ body: unknown; 
   if (res.status === 404) throw fail('not_found', 'repository not found (or not public)');
   if (!res.ok) throw fail('upstream_error', `GitHub responded with status ${res.status}`);
   let body: unknown;
-  try { body = await res.json(); } catch { throw fail('bad_response', 'GitHub returned invalid JSON'); }
+  try { body = await res.json(); } catch { throw signal.aborted ? aborted() : fail('bad_response', 'GitHub returned invalid JSON'); }
   return { body, rl };
 }
 
 /**
- * Fetches repo, issues, pulls, commits (latest 30 each). All-or-nothing: any failure throws
- * SnapshotFailure and no snapshot is produced.
+ * Fetches repo, issues, pulls, commits (latest 30 each). All-or-nothing: any failure (including
+ * a timeout) throws SnapshotFailure, outstanding requests are cancelled, and no snapshot is produced.
  */
 export async function fetchSnapshot(deps: FetchDeps, repo: string): Promise<GitHubSnapshot> {
   if (!REPO_RE.test(repo)) throw fail('invalid_repo', 'repo must be owner/name');
   const base = `/repos/${repo}`;
   const q = 'per_page=30';
-  const [r, i, p, c] = await Promise.all([
-    getJson(deps, base),
-    getJson(deps, `${base}/issues?state=all&sort=created&direction=desc&${q}`),
-    getJson(deps, `${base}/pulls?state=all&sort=created&direction=desc&${q}`),
-    getJson(deps, `${base}/commits?${q}`),
-  ]);
+  const ctl = new AbortController();
+  let r, i, p, c;
+  try {
+    [r, i, p, c] = await Promise.all([
+      getJson(deps, base, ctl.signal),
+      getJson(deps, `${base}/issues?state=all&sort=created&direction=desc&${q}`, ctl.signal),
+      getJson(deps, `${base}/pulls?state=all&sort=created&direction=desc&${q}`, ctl.signal),
+      getJson(deps, `${base}/commits?${q}`, ctl.signal),
+    ]);
+  } catch (e) {
+    ctl.abort();
+    throw e;
+  }
   try {
     const info = normalizeRepo(r.body);
     if (info.private) throw fail('private_repo', 'private repositories are not supported');

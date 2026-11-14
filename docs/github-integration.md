@@ -49,5 +49,9 @@ See architecture.md section 5. Summary: GET-only allow-list, repo allow-list, se
 - This sandbox still returns HTTP 403 for those endpoints (proxy policy), so Phase 1A verified the function against **mocked** upstream responses only. See test-plan.md.
 - Implemented: GET-only upstream calls, allow-list (default `pofuru-web/ai-dev-lab-public`), `.`/`..` segment rejection, private repos refused, token from server env only, merged = `merged_at != null` (or explicit `merged` boolean).
 
+## 6b. Phase 1A hardening
+- Timeouts: every upstream GET has a 10 s limit (headers and body, `AbortSignal.timeout`); the first failure cancels the other requests; result is `timeout` (HTTP 504). The browser client waits at most 15 s. A timeout never replaces the stored snapshot.
+- Strict validation: required fields must be present with the right type; `state` must be exactly `open`/`closed`; PR `merged_at` must be null or a date; a `merged` flag that contradicts `merged_at`, a merged-but-open PR, a closed issue without `closed_at`, non-40-hex shas and invalid dates are rejected as `bad_response` (HTTP 502). Nothing is coerced to a default. Only a null `user` (deleted account) is accepted and stored as an empty author. The client re-validates the snapshot before saving.
+
 ## 7. Open item to close before Phase 1 coding
 Run the 4 calls from an environment with unrestricted GitHub API access (owner's machine or a Netlify deploy preview) and record: counts, headers, `Link` behavior, anonymous limit, PR `merged_at` shape. Until then everything in section 3 and 4 is design, not fact.

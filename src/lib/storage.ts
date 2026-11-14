@@ -17,7 +17,15 @@ export type LoadResult =
   | { status: 'readonly_newer_schema'; data: LocalData; foundVersion: number }
   | { status: 'corrupt'; data: LocalData; problems: string[] };
 
-export type SaveResult = { ok: true } | { ok: false; error: string };
+/**
+ * recovery (only set when a write was attempted and then judged bad):
+ *  - 'restored_previous': read-back failed; the previous main value was written back and verified.
+ *  - 'removed_new': read-back failed on a first-ever save; the unverifiable new value was removed.
+ *  - 'restore_failed': could not restore/verify. Previous data may still be in LOCAL_PREV_KEY, and
+ *    loadLocal() falls back to it if main is unreadable. The UI must tell the user to export a backup.
+ */
+export type SaveRecovery = 'restored_previous' | 'removed_new' | 'restore_failed';
+export type SaveResult = { ok: true } | { ok: false; error: string; recovery?: SaveRecovery };
 
 function parse(raw: string | null): unknown {
   if (raw === null) return undefined;
@@ -79,10 +87,24 @@ export function saveLocal(kv: KV, data: LocalData): SaveResult {
     // setItem failed: the previous value of LOCAL_KEY is expected to be intact; verify.
     return { ok: false, error: `write failed (previous data kept): ${String(e)}` };
   }
+  let readBackProblem: string | undefined;
   try {
-    if (kv.getItem(LOCAL_KEY) !== raw) return { ok: false, error: 'read-back mismatch' };
-  } catch (e) { return { ok: false, error: `read-back failed: ${String(e)}` }; }
-  return { ok: true };
+    if (kv.getItem(LOCAL_KEY) !== raw) readBackProblem = 'read-back mismatch';
+  } catch (e) { readBackProblem = `read-back failed: ${String(e)}`; }
+  if (readBackProblem === undefined) return { ok: true };
+  return { ok: false, error: readBackProblem, recovery: restoreAfterBadWrite(kv, current) };
+}
+
+/** Puts the pre-save main value back (or removes the new one if there was none) and verifies it. */
+function restoreAfterBadWrite(kv: KV, previousRaw: string | null): SaveRecovery {
+  try {
+    if (previousRaw === null) {
+      kv.removeItem(LOCAL_KEY);
+      return kv.getItem(LOCAL_KEY) === null ? 'removed_new' : 'restore_failed';
+    }
+    kv.setItem(LOCAL_KEY, previousRaw);
+    return kv.getItem(LOCAL_KEY) === previousRaw ? 'restored_previous' : 'restore_failed';
+  } catch { return 'restore_failed'; }
 }
 
 export function loadSnapshot(kv: KV, projectId: string): GitHubSnapshot | undefined {

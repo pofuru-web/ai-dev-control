@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createHandler } from '../../src/lib/github/handler';
 import { refreshSnapshot } from '../../src/lib/github/client';
 import { loadSnapshot, saveSnapshot } from '../../src/lib/storage';
-import { MemKV } from '../unit/helpers';
+import { MemKV, ghCommit, ghIssue, ghPull, ghRepo } from '../unit/helpers';
 
 const REPO = 'pofuru-web/ai-dev-lab-public';
 const rlHeaders = { 'x-ratelimit-limit': '60', 'x-ratelimit-remaining': '55', 'x-ratelimit-reset': '1800000000' };
@@ -14,13 +14,10 @@ function upstream(overrides: Record<string, () => Response> = {}) {
     expect(init?.method).toBe('GET');
     const path = new URL(url).pathname;
     for (const [k, f] of Object.entries(overrides)) if (path.endsWith(k)) return f();
-    if (path.endsWith('/issues')) return ok([
-      { number: 1, title: 'issue', state: 'open', user: { login: 'o' }, created_at: '2026-01-01T00:00:00Z', html_url: 'u', labels: [] },
-      { number: 2, title: 'pr as issue', state: 'closed', pull_request: {}, user: { login: 'o' }, created_at: '2026-01-02T00:00:00Z', html_url: 'u', labels: [] },
-    ]);
-    if (path.endsWith('/pulls')) return ok([{ number: 2, title: 'pr', state: 'closed', merged_at: '2026-01-03T00:00:00Z', user: { login: 'o' }, head: { ref: 'h' }, base: { ref: 'main' }, created_at: '2026-01-02T00:00:00Z', html_url: 'u' }]);
-    if (path.endsWith('/commits')) return ok([{ sha: 's1', html_url: 'u', commit: { message: 'm', committer: { date: '2026-01-01T00:00:00Z' } }, author: { login: 'o' } }]);
-    return ok({ full_name: REPO, private: false, default_branch: 'main', html_url: 'u' });
+    if (path.endsWith('/issues')) return ok([ghIssue(1), ghIssue(2, { state: 'closed', closed_at: '2026-01-04T00:00:00Z', pull_request: {} })]);
+    if (path.endsWith('/pulls')) return ok([ghPull(2, { state: 'closed', merged_at: '2026-01-03T00:00:00Z' })]);
+    if (path.endsWith('/commits')) return ok([ghCommit('a')]);
+    return ok(ghRepo());
   }) as unknown as typeof fetch;
 }
 
@@ -83,8 +80,73 @@ describe('github-snapshot function (mocked upstream)', () => {
     expect((await (await call(createHandler({}, upstream({ '/issues': () => ok({}) })))).json()).error.code).toBe('bad_response');
   });
   it('private repositories are refused', async () => {
-    const f = upstream({ [`/${REPO.split('/')[1]}`]: () => ok({ full_name: REPO, private: true }) });
+    const f = upstream({ [`/${REPO.split('/')[1]}`]: () => ok(ghRepo({ private: true })) });
     expect((await call(createHandler({}, f))).status).toBe(403);
+  });
+});
+
+const hang = (calls?: { aborted: number }) => ((_u: RequestInfo | URL, init?: RequestInit) =>
+  new Promise<Response>((_res, rej) => init?.signal?.addEventListener('abort', () => { if (calls) calls.aborted++; rej(new DOMException('aborted', 'AbortError')); }))) as unknown as typeof fetch;
+
+describe('timeouts', () => {
+  it('upstream hang -> 504 timeout within the configured limit', async () => {
+    const t = Date.now();
+    const res = await createHandler({}, hang(), { timeoutMs: 30 })(new Request(`https://x.test/api/github-snapshot?repo=${REPO}`));
+    expect(res.status).toBe(504);
+    expect((await res.json()).error.code).toBe('timeout');
+    expect(Date.now() - t).toBeLessThan(2000);
+  });
+  it('one slow request fails everything and cancels the rest', async () => {
+    const ok200 = upstream();
+    const calls = { aborted: 0 };
+    const f = ((u: RequestInfo | URL, init?: RequestInit) => String(u).includes('/commits') ? hang(calls)(u, init) : (ok200 as unknown as typeof fetch)(u, init)) as unknown as typeof fetch;
+    const res = await createHandler({}, f, { timeoutMs: 30 })(new Request(`https://x.test/api/github-snapshot?repo=${REPO}`));
+    expect(res.status).toBe(504);
+  });
+  it('body read that never finishes also times out', async () => {
+    const f = (async (_u: RequestInfo | URL, init?: RequestInit) => new Response(new ReadableStream({ start(c) { init?.signal?.addEventListener('abort', () => c.error(new DOMException('aborted', 'AbortError'))); } }), { status: 200, headers: rlHeaders })) as unknown as typeof fetch;
+    const res = await createHandler({}, f, { timeoutMs: 30 })(new Request(`https://x.test/api/github-snapshot?repo=${REPO}`));
+    expect((await res.json()).error.code).toBe('timeout');
+  });
+  it('client timeout keeps the previous snapshot', async () => {
+    const kv = new MemKV();
+    const res = await call(createHandler({}, upstream()));
+    saveSnapshot(kv, 'p1', (await res.json()).snapshot);
+    const before = kv.getItem('adc:snapshot:v1:p1');
+    const r = await refreshSnapshot(kv, 'p1', REPO, hang(), 30);
+    expect(r).toMatchObject({ ok: false, error: { code: 'timeout' }, keptPrevious: true });
+    expect(kv.getItem('adc:snapshot:v1:p1')).toBe(before);
+  });
+  it('server-side timeout response keeps the previous snapshot', async () => {
+    const kv = new MemKV();
+    saveSnapshot(kv, 'p1', (await (await call(createHandler({}, upstream()))).json()).snapshot);
+    const before = kv.getItem('adc:snapshot:v1:p1');
+    const h = createHandler({}, hang(), { timeoutMs: 30 });
+    const r = await refreshSnapshot(kv, 'p1', REPO, (async (u: RequestInfo | URL) => h(new Request(new URL(String(u), 'https://x.test')))) as unknown as typeof fetch);
+    expect(r).toMatchObject({ ok: false, error: { code: 'timeout' } });
+    expect(kv.getItem('adc:snapshot:v1:p1')).toBe(before);
+  });
+});
+
+describe('abnormal upstream values are rejected end to end', () => {
+  it.each([
+    ['/issues', () => ok([ghIssue(1, { state: 'bogus' })])],
+    ['/pulls', () => ok([ghPull(1, { state: 'closed', merged: true })])],
+    ['/commits', () => ok([ghCommit('a', { sha: 'zz' })])],
+  ])('%s -> 502 bad_response and nothing stored', async (path, resp) => {
+    const kv = new MemKV();
+    const h = createHandler({}, upstream({ [path]: resp }));
+    const r = await refreshSnapshot(kv, 'p1', REPO, (async (u: RequestInfo | URL) => h(new Request(new URL(String(u), 'https://x.test')))) as unknown as typeof fetch);
+    expect(r).toMatchObject({ ok: false, error: { code: 'bad_response' } });
+    expect(loadSnapshot(kv, 'p1')).toBeUndefined();
+  });
+  it('client rejects a snapshot with an abnormal state value', async () => {
+    const kv = new MemKV();
+    const snap = (await (await call(createHandler({}, upstream()))).json()).snapshot;
+    snap.pulls[0].state = 'merged';
+    const r = await refreshSnapshot(kv, 'p1', REPO, (async () => new Response(JSON.stringify({ ok: true, snapshot: snap }))) as unknown as typeof fetch);
+    expect(r.ok).toBe(false);
+    expect(loadSnapshot(kv, 'p1')).toBeUndefined();
   });
 });
 

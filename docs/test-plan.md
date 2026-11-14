@@ -1,5 +1,7 @@
 # Test plan (updated in Phase 1A)
 
+Phase 1A hardening adds timeout, strict-validation and read-back-recovery tests (95 tests total).
+
 Phase 1A status: unit + integration tests (mocked GitHub) are implemented under `tests/unit` and `tests/integration`; one Playwright smoke test exists. Live-API and deployed-Netlify checks are NOT done. Planned-but-not-implemented items below (304/ETag, timeout, E2E data flows) remain future work.
 
 ## Unit (Vitest)

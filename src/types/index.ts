@@ -115,7 +115,7 @@ export interface GitHubSnapshot {
   rateLimit?: RateLimitInfo;
 }
 
-export type SnapshotErrorCode = 'invalid_repo' | 'not_allowed' | 'rate_limited' | 'not_found' | 'private_repo' | 'upstream_error' | 'bad_response' | 'network' | 'method_not_allowed';
+export type SnapshotErrorCode = 'invalid_repo' | 'not_allowed' | 'rate_limited' | 'not_found' | 'private_repo' | 'upstream_error' | 'bad_response' | 'network' | 'timeout' | 'method_not_allowed';
 
 export interface SnapshotError {
   code: SnapshotErrorCode;

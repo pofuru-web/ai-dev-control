@@ -11,6 +11,8 @@ All types are design proposals; not implemented or compiled yet.
 
 Writes (Phase 1A): local data is ONE key (`adc:local:v1`), so each `setItem` replaces it as a unit. Cross-key updates are **not atomic**: before overwriting, the last valid generation is copied to `adc:local:v1:prev` as a best-effort recovery copy (two sequential writes). Flow: validate -> serialize -> round-trip check -> copy prev -> set main -> read-back. If any step fails the previous main value is left in place and the failure is returned. On load, a corrupt main falls back to `prev`; a newer `schemaVersion` is read-only and never overwritten. The snapshot key is written independently of local data.
 
+Read-back failure handling (`SaveResult.recovery`): if the post-write read-back mismatches or throws, the previous main value is written back and verified (`restored_previous`); on a first-ever save the unverifiable value is removed (`removed_new`); if restoring also fails (`restore_failed`) the corrupt main is NOT deleted, `loadLocal` falls back to `adc:local:v1:prev`, and the UI must tell the user to export a backup. Every non-ok result is shown to the user; it is never swallowed.
+
 ## Types (TypeScript)
 ```ts
 type ISODate = string; // ISO 8601

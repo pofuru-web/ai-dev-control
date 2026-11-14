@@ -96,3 +96,64 @@ describe('snapshot storage', () => {
     expect(loadSnapshot(kv, 'p1')?.fetchedAt).toBe('2026-01-01T00:00:00Z');
   });
 });
+
+describe('read-back failure and recovery', () => {
+  // KV whose main-key write is silently corrupted for values containing a marker.
+  class CorruptingKV extends MemKV {
+    corruptMarker = '"name":"new"';
+    failRestore = false;
+    setItem(k: string, v: string) {
+      if (k === LOCAL_KEY && v.includes(this.corruptMarker)) { this.sets++; this.m.set(k, v.slice(0, 20)); return; }
+      if (k === LOCAL_KEY && this.failRestore && this.m.get(k)?.length === 20) { this.sets++; throw new Error('QuotaExceededError'); }
+      super.setItem(k, v);
+    }
+  }
+
+  it('silent corruption: previous value is restored and verified, failure is reported', () => {
+    const kv = new CorruptingKV();
+    saveLocal(kv, sampleData('old'));
+    const r = saveLocal(kv, sampleData('new'));
+    expect(r).toMatchObject({ ok: false, error: 'read-back mismatch', recovery: 'restored_previous' });
+    const loaded = loadLocal(kv);
+    expect(loaded.status).toBe('ok');
+    expect(loaded.data.projects[0]?.name).toBe('old');
+  });
+
+  it('first-ever save that reads back wrong is removed (nothing half-written remains)', () => {
+    const kv = new CorruptingKV();
+    const r = saveLocal(kv, sampleData('new'));
+    expect(r).toMatchObject({ ok: false, recovery: 'removed_new' });
+    expect(kv.getItem(LOCAL_KEY)).toBeNull();
+    expect(loadLocal(kv).status).toBe('empty');
+  });
+
+  it('restore itself fails: reported as restore_failed and load still recovers old data from prev', () => {
+    const kv = new CorruptingKV();
+    saveLocal(kv, sampleData('old'));
+    kv.failRestore = true;
+    const r = saveLocal(kv, sampleData('new'));
+    expect(r).toMatchObject({ ok: false, recovery: 'restore_failed' });
+    expect(kv.getItem(LOCAL_KEY)).not.toBeNull(); // corrupt main is not deleted
+    const loaded = loadLocal(kv);
+    expect(loaded.status).toBe('ok');
+    expect(loaded.status === 'ok' && loaded.recoveredFromPrev).toBe(true);
+    expect(loaded.data.projects[0]?.name).toBe('old');
+  });
+
+  it('getItem throwing during read-back: reported, restore attempted', () => {
+    const kv = new MemKV();
+    saveLocal(kv, sampleData('old'));
+    const origGet = kv.getItem.bind(kv);
+    let armed = false;
+    const origSet = kv.setItem.bind(kv);
+    kv.setItem = (k, v) => { origSet(k, v); if (k === LOCAL_KEY && v.includes('"name":"new"')) armed = true; };
+    kv.getItem = (k) => { if (armed && k === LOCAL_KEY) { armed = false; throw new Error('SecurityError'); } return origGet(k); };
+    const r = saveLocal(kv, sampleData('new'));
+    expect(r).toMatchObject({ ok: false, recovery: 'restored_previous' });
+    expect(loadLocal(kv).data.projects[0]?.name).toBe('old');
+  });
+
+  it('successful save never reports a recovery', () => {
+    expect(saveLocal(new MemKV(), sampleData())).toEqual({ ok: true });
+  });
+});

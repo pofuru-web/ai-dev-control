@@ -17,11 +17,11 @@ const json = (status: number, body: unknown, extra: Record<string, string> = {})
 
 const errStatus: Record<SnapshotError['code'], number> = {
   invalid_repo: 400, not_allowed: 403, method_not_allowed: 405, rate_limited: 429,
-  not_found: 404, private_repo: 403, upstream_error: 502, bad_response: 502, network: 502,
+  not_found: 404, private_repo: 403, upstream_error: 502, bad_response: 502, network: 502, timeout: 504,
 };
 
 /** Builds the request handler. Token is read from server env only and never included in a response. */
-export function createHandler(env: HandlerEnv, fetchImpl: typeof fetch = fetch) {
+export function createHandler(env: HandlerEnv, fetchImpl: typeof fetch = fetch, opts: { timeoutMs?: number } = {}) {
   return async (req: Request): Promise<Response> => {
     const fail = (error: SnapshotError) => json(errStatus[error.code], { ok: false, error });
     if (req.method !== 'GET') return json(405, { ok: false, error: { code: 'method_not_allowed', message: 'GET only' } }, { allow: 'GET' });
@@ -29,7 +29,7 @@ export function createHandler(env: HandlerEnv, fetchImpl: typeof fetch = fetch) 
     if (!REPO_RE.test(repo)) return fail({ code: 'invalid_repo', message: 'repo must be owner/name' });
     if (!parseAllowList(env.ALLOWED_REPOS).includes(repo.toLowerCase())) return fail({ code: 'not_allowed', message: 'repository is not in the allow-list' });
     try {
-      const snapshot = await fetchSnapshot({ fetch: fetchImpl, token: env.GITHUB_TOKEN || undefined }, repo);
+      const snapshot = await fetchSnapshot({ fetch: fetchImpl, token: env.GITHUB_TOKEN || undefined, timeoutMs: opts.timeoutMs }, repo);
       return json(200, { ok: true, snapshot });
     } catch (e) {
       if (e instanceof SnapshotFailure) return fail(e.error);

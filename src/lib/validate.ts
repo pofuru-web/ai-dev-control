@@ -79,10 +79,19 @@ export function isLocalData(v: unknown): v is LocalData {
   return localDataProblems(v).length === 0;
 }
 
+const isInt = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && v > 0;
+const isState = (v: unknown) => v === 'open' || v === 'closed';
+const all = (v: unknown, f: (x: Record<string, unknown>) => boolean) => Array.isArray(v) && v.every((x) => isObj(x) && f(x));
+
+/** Structural check of a snapshot received from the network or read from storage. */
 export function isSnapshot(v: unknown): v is GitHubSnapshot {
   return (
-    isObj(v) && isStr(v.repo) && isDate(v.fetchedAt) && isObj(v.info) && isStr(v.info.fullName) &&
-    Array.isArray(v.issues) && Array.isArray(v.pulls) && Array.isArray(v.commits)
+    isObj(v) && isStr(v.repo) && isDate(v.fetchedAt) &&
+    isObj(v.info) && isStr(v.info.fullName) && typeof v.info.private === 'boolean' && v.info.private === false &&
+    all(v.issues, (i) => isInt(i.number) && isState(i.state) && isStr(i.title) && isDate(i.createdAt) && Array.isArray(i.labels)) &&
+    all(v.pulls, (p) => isInt(p.number) && isState(p.state) && typeof p.merged === 'boolean' && isStr(p.title) && isDate(p.createdAt) &&
+      (p.merged ? p.state === 'closed' && isDate(p.mergedAt) : p.mergedAt === undefined)) &&
+    all(v.commits, (c) => isStr(c.sha) && isStr(c.message) && isDate(c.committedAt))
   );
 }
 

@@ -41,8 +41,13 @@ See architecture.md section 5. Summary: GET-only allow-list, repo allow-list, se
 | 403/429 rate limit | keep cache, show reset time |
 | 404 | keep cache, mark project repo invalid |
 | network/timeout | keep cache, retry manually |
-| partial (one of three lists fails) | replace only the successful lists, status `partial` |
+| any one of the four requests fails | whole fetch fails; nothing is stored; previous snapshot kept (no partial snapshots) |
 | malformed JSON | reject, keep cache |
+
+## 6a. Phase 1A update
+- The owner reported that all four REST endpoints (repo/issues/pulls/commits) for `pofuru-web/ai-dev-lab-public` rendered in their browser. HTTP headers, Netlify Functions behaviour and data details remain **unverified** by this project.
+- This sandbox still returns HTTP 403 for those endpoints (proxy policy), so Phase 1A verified the function against **mocked** upstream responses only. See test-plan.md.
+- Implemented: GET-only upstream calls, allow-list (default `pofuru-web/ai-dev-lab-public`), `.`/`..` segment rejection, private repos refused, token from server env only, merged = `merged_at != null` (or explicit `merged` boolean).
 
 ## 7. Open item to close before Phase 1 coding
 Run the 4 calls from an environment with unrestricted GitHub API access (owner's machine or a Netlify deploy preview) and record: counts, headers, `Link` behavior, anonymous limit, PR `merged_at` shape. Until then everything in section 3 and 4 is design, not fact.

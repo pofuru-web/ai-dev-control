@@ -1,0 +1,98 @@
+import { describe, expect, it } from 'vitest';
+import { LOCAL_KEY, LOCAL_PREV_KEY, loadLocal, loadSnapshot, saveLocal, saveSnapshot, snapshotKey } from '../../src/lib/storage';
+import { MemKV, sampleData } from './helpers';
+
+describe('local storage', () => {
+  it('empty store loads as empty', () => {
+    expect(loadLocal(new MemKV()).status).toBe('empty');
+  });
+
+  it('save then load round-trips', () => {
+    const kv = new MemKV();
+    expect(saveLocal(kv, sampleData()).ok).toBe(true);
+    const r = loadLocal(kv);
+    expect(r.status).toBe('ok');
+    expect(r.data.projects[0]?.name).toBe('P');
+  });
+
+  it('keeps previous generation under a second key', () => {
+    const kv = new MemKV();
+    saveLocal(kv, sampleData('one'));
+    saveLocal(kv, sampleData('two'));
+    expect(JSON.parse(kv.getItem(LOCAL_PREV_KEY)!).projects[0].name).toBe('one');
+    expect(JSON.parse(kv.getItem(LOCAL_KEY)!).projects[0].name).toBe('two');
+  });
+
+  it('failed write (quota) keeps old data and reports failure', () => {
+    const kv = new MemKV();
+    saveLocal(kv, sampleData('old'));
+    kv.failSet = (k) => k === LOCAL_KEY;
+    const r = saveLocal(kv, sampleData('new'));
+    expect(r.ok).toBe(false);
+    expect(loadLocal(kv).data.projects[0]?.name).toBe('old');
+  });
+
+  it('failure of the prev-copy write does not break the main write', () => {
+    const kv = new MemKV();
+    saveLocal(kv, sampleData('old'));
+    kv.failSet = (k) => k === LOCAL_PREV_KEY;
+    expect(saveLocal(kv, sampleData('new')).ok).toBe(true);
+    expect(loadLocal(kv).data.projects[0]?.name).toBe('new');
+  });
+
+  it('recovers from prev when main is corrupt', () => {
+    const kv = new MemKV();
+    saveLocal(kv, sampleData('one'));
+    saveLocal(kv, sampleData('two'));
+    kv.m.set(LOCAL_KEY, '{broken');
+    const r = loadLocal(kv);
+    expect(r.status).toBe('ok');
+    expect(r.status === 'ok' && r.recoveredFromPrev).toBe(true);
+    expect(r.data.projects[0]?.name).toBe('one');
+  });
+
+  it('corrupt main without prev reports corrupt and does not delete the raw value', () => {
+    const kv = new MemKV();
+    kv.m.set(LOCAL_KEY, '{broken');
+    expect(loadLocal(kv).status).toBe('corrupt');
+    expect(kv.getItem(LOCAL_KEY)).toBe('{broken');
+  });
+
+  it('newer schema version is read-only and untouched', () => {
+    const kv = new MemKV();
+    kv.m.set(LOCAL_KEY, JSON.stringify({ ...sampleData(), schemaVersion: 99 }));
+    const r = loadLocal(kv);
+    expect(r.status).toBe('readonly_newer_schema');
+    expect(kv.getItem(LOCAL_KEY)).toContain('"schemaVersion":99');
+  });
+
+  it('rejects invalid data before touching storage', () => {
+    const kv = new MemKV();
+    saveLocal(kv, sampleData('old'));
+    const bad = sampleData('bad');
+    bad.workSessions[0]!.durationMinutes = 5; // inconsistent with start/end
+    const sets = kv.sets;
+    expect(saveLocal(kv, bad).ok).toBe(false);
+    expect(kv.sets).toBe(sets);
+    expect(loadLocal(kv).data.projects[0]?.name).toBe('old');
+  });
+});
+
+describe('snapshot storage', () => {
+  const snap = { repo: 'a/b', fetchedAt: '2026-01-01T00:00:00Z', info: { fullName: 'a/b', defaultBranch: 'main', private: false, htmlUrl: '' }, issues: [], pulls: [], commits: [] };
+  it('is stored under a separate key and not mixed with local data', () => {
+    const kv = new MemKV();
+    saveLocal(kv, sampleData());
+    saveSnapshot(kv, 'p1', snap);
+    expect(snapshotKey('p1')).not.toBe(LOCAL_KEY);
+    expect(loadLocal(kv).data).toEqual(sampleData());
+    expect(loadSnapshot(kv, 'p1')?.repo).toBe('a/b');
+  });
+  it('failed snapshot write keeps the previous snapshot', () => {
+    const kv = new MemKV();
+    saveSnapshot(kv, 'p1', snap);
+    kv.failSet = () => true;
+    expect(saveSnapshot(kv, 'p1', { ...snap, fetchedAt: '2027-01-01T00:00:00Z' }).ok).toBe(false);
+    expect(loadSnapshot(kv, 'p1')?.fetchedAt).toBe('2026-01-01T00:00:00Z');
+  });
+});

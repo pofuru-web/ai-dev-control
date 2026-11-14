@@ -1,4 +1,6 @@
-# Test plan (Phase 0 draft; no tests have been run for the app because it does not exist yet)
+# Test plan (updated in Phase 1A)
+
+Phase 1A status: unit + integration tests (mocked GitHub) are implemented under `tests/unit` and `tests/integration`; one Playwright smoke test exists. Live-API and deployed-Netlify checks are NOT done. Planned-but-not-implemented items below (304/ETag, timeout, E2E data flows) remain future work.
 
 ## Unit (Vitest)
 - dedupe: items with `pull_request` removed from issues; shared number space.

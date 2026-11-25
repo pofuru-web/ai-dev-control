@@ -53,5 +53,27 @@ See architecture.md section 5. Summary: GET-only allow-list, repo allow-list, se
 - Timeouts: every upstream GET has a 10 s limit (headers and body, `AbortSignal.timeout`); the first failure cancels the other requests; result is `timeout` (HTTP 504). The browser client waits at most 15 s. A timeout never replaces the stored snapshot.
 - Strict validation: required fields must be present with the right type; `state` must be exactly `open`/`closed`; PR `merged_at` must be null or a date; a `merged` flag that contradicts `merged_at`, a merged-but-open PR, a closed issue without `closed_at`, non-40-hex shas and invalid dates are rejected as `bad_response` (HTTP 502). Nothing is coerced to a default. Only a null `user` (deleted account) is accepted and stored as an empty author. The client re-validates the snapshot before saving.
 
+## 6c. Owner-measured production verification (Phase 1A deployment)
+Reported by the owner (not measured by Claude Code; recorded here as provided):
+
+| Item | Value |
+|---|---|
+| Deploy URL | https://deft-halva-0ad17e.netlify.app/ |
+| Deployed HEAD | 9e225b0b1f4ea937125e7ccb97f0c9a86bc15d61 |
+| Function path | /api/github-snapshot |
+| Verified at | 2026-11-25 17:15 JST |
+| Target | pofuru-web/ai-dev-lab-public |
+| GITHUB_TOKEN | not set (unauthenticated upstream) |
+| Response | `ok: true` |
+| Issues | 1 (#1, closed) |
+| Pull requests | 1 (#2, closed, `merged: true`) |
+| Commits | 3 |
+| rateLimit | limit 60, remaining 56 |
+| Strict normalization | accepted the real data without rejection |
+
+This confirms, for this one repository: the Netlify Function runs, unauthenticated GitHub access works with the 60/hour limit, and the strict validators accept real data (including the merged PR and issue/PR dedupe result of 1 issue + 1 PR).
+
+**Still unverified:** paging (`Link` header / more than 30 items), abnormal-case behaviour in the real environment (rate-limit exhaustion, 404, upstream failure, real timeouts), ETag/304 (not implemented), behaviour with `GITHUB_TOKEN` set, and any repository other than the target.
+
 ## 7. Open item to close before Phase 1 coding
-Run the 4 calls from an environment with unrestricted GitHub API access (owner's machine or a Netlify deploy preview) and record: counts, headers, `Link` behavior, anonymous limit, PR `merged_at` shape. Until then everything in section 3 and 4 is design, not fact.
+Run the 4 calls from an environment with unrestricted GitHub API access (owner's machine or a Netlify deploy preview) and record: counts, headers, `Link` behavior, anonymous limit, PR `merged_at` shape. Section 6c now records the owner's measurement for the target repository; the items listed there as unverified remain open.

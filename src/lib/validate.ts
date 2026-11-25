@@ -30,7 +30,9 @@ export function isTask(v: unknown): v is Task {
     isObj(v) && isStr(v.id) && isStr(v.projectId) && isStr(v.title) && optStr(v.notes) &&
     ['todo', 'in_progress', 'in_review', 'awaiting_owner', 'done', 'blocked'].includes(v.status as string) &&
     optStr(v.assigneeAgentId) && isObj(v.links) && typeof v.ownerApproved === 'boolean' &&
-    optDate(v.approvedAt) && isDate(v.createdAt) && isDate(v.updatedAt)
+    optDate(v.approvedAt) && isDate(v.createdAt) && isDate(v.updatedAt) &&
+    // Approval invariant: only an approved task may be done, and approval implies done + a timestamp.
+    (v.status === 'done') === (v.ownerApproved === true) && (v.ownerApproved !== true || isDate(v.approvedAt))
   );
 }
 

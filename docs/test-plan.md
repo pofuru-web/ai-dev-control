@@ -1,6 +1,6 @@
 # Test plan (updated in Phase 1A)
 
-Phase 1A hardening adds timeout, strict-validation and read-back-recovery tests (95 tests total).
+Phase 1B adds UI, storage-guard and domain tests (see below). Phase 1A hardening adds timeout, strict-validation and read-back-recovery tests (95 tests total).
 
 Phase 1A status: unit + integration tests (mocked GitHub) are implemented under `tests/unit` and `tests/integration`; one Playwright smoke test exists. Live-API and deployed-Netlify checks are NOT done. Planned-but-not-implemented items below (304/ETag, timeout, E2E data flows) remain future work.
 
@@ -30,3 +30,8 @@ Real calls to `pofuru-web/ai-dev-lab-public`: counts, headers, Link paging, unau
 
 ## Exit criteria for MVP
 All unit/integration green, E2E green, typecheck + lint clean, security checks pass, live verification recorded.
+
+## Phase 1B additions
+- Unit: pre-write protection (aborts on unreadable existing data; never overwrites a newer schemaVersion in main or prev), approval invariant (done <=> approved), domain operations (projects/agents/tasks/approval/work sessions/aggregation/dashboard).
+- E2E (Playwright, GitHub function mocked with `page.route`): persistence across reload, task status changes, explicit approval (cancel/confirm, revocation on leaving done), manual work-time aggregation, backup download / invalid file / confirm-then-restore, GitHub sync success/failure/rate-limit with old data retained, syncing state, manual Issue/PR link resolution, save failure UI and recovery, newer-schema read-only, corrupt-data flow, mobile and desktop layout.
+- Not covered: real deployed Function from E2E, paging, real-environment error cases, cross-browser (Chromium only), accessibility audit.

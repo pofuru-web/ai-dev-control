@@ -157,3 +157,73 @@ describe('read-back failure and recovery', () => {
     expect(saveLocal(new MemKV(), sampleData())).toEqual({ ok: true });
   });
 });
+
+describe('pre-write protection', () => {
+  it('aborts without writing when the existing data cannot be read', () => {
+    const kv = new MemKV();
+    saveLocal(kv, sampleData('old'));
+    const snapshotOfMap = new Map(kv.m);
+    const origGet = kv.getItem.bind(kv);
+    kv.getItem = (k) => { if (k === LOCAL_KEY) throw new Error('SecurityError'); return origGet(k); };
+    const sets = kv.sets;
+    const r = saveLocal(kv, sampleData('new'));
+    expect(r).toMatchObject({ ok: false, kind: 'read_failed' });
+    expect(kv.sets).toBe(sets); // no setItem at all
+    expect(kv.m).toEqual(snapshotOfMap);
+  });
+
+  it('aborts when the prev key cannot be read either', () => {
+    const kv = new MemKV();
+    saveLocal(kv, sampleData('old'));
+    const origGet = kv.getItem.bind(kv);
+    kv.getItem = (k) => { if (k === LOCAL_PREV_KEY) throw new Error('x'); return origGet(k); };
+    const sets = kv.sets;
+    expect(saveLocal(kv, sampleData('new'))).toMatchObject({ ok: false, kind: 'read_failed' });
+    expect(kv.sets).toBe(sets);
+  });
+
+  it('never overwrites a newer schemaVersion in the main key', () => {
+    const kv = new MemKV();
+    const future = JSON.stringify({ ...sampleData('future'), schemaVersion: 99 });
+    kv.m.set(LOCAL_KEY, future);
+    const sets = kv.sets;
+    expect(saveLocal(kv, sampleData('new'))).toMatchObject({ ok: false, kind: 'newer_schema' });
+    expect(kv.sets).toBe(sets);
+    expect(kv.getItem(LOCAL_KEY)).toBe(future);
+  });
+
+  it('never overwrites when only the prev key holds a newer schema', () => {
+    const kv = new MemKV();
+    const future = JSON.stringify({ ...sampleData('future'), schemaVersion: 7 });
+    kv.m.set(LOCAL_PREV_KEY, future);
+    expect(saveLocal(kv, sampleData('new'))).toMatchObject({ ok: false, kind: 'newer_schema' });
+    expect(kv.getItem(LOCAL_PREV_KEY)).toBe(future);
+    expect(kv.getItem(LOCAL_KEY)).toBeNull();
+  });
+
+  it('a newer-schema prev is not used for recovery', () => {
+    const kv = new MemKV();
+    kv.m.set(LOCAL_PREV_KEY, JSON.stringify({ ...sampleData('future'), schemaVersion: 7 }));
+    expect(loadLocal(kv).status).toBe('empty');
+  });
+
+  it('a corrupt (not newer) main may still be replaced by an explicit save', () => {
+    const kv = new MemKV();
+    kv.m.set(LOCAL_KEY, '{broken');
+    expect(saveLocal(kv, sampleData('fresh')).ok).toBe(true);
+  });
+});
+
+describe('approval invariant', () => {
+  it('done without approval is rejected, approval without done is rejected', () => {
+    const d = sampleData();
+    d.tasks[0]!.status = 'done';
+    expect(saveLocal(new MemKV(), d).ok).toBe(false);
+    const e = sampleData();
+    e.tasks[0]!.ownerApproved = true; e.tasks[0]!.approvedAt = '2026-01-01T00:00:00Z';
+    expect(saveLocal(new MemKV(), e).ok).toBe(false);
+    const f = sampleData();
+    Object.assign(f.tasks[0]!, { status: 'done', ownerApproved: true, approvedAt: '2026-01-01T00:00:00Z' });
+    expect(saveLocal(new MemKV(), f).ok).toBe(true);
+  });
+});

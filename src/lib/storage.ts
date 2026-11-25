@@ -25,7 +25,18 @@ export type LoadResult =
  *    loadLocal() falls back to it if main is unreadable. The UI must tell the user to export a backup.
  */
 export type SaveRecovery = 'restored_previous' | 'removed_new' | 'restore_failed';
-export type SaveResult = { ok: true } | { ok: false; error: string; recovery?: SaveRecovery };
+/**
+ * kind (only for refusals made BEFORE any write was attempted; nothing was changed):
+ *  - 'read_failed': the existing data could not be read, so overwriting it blindly was refused.
+ *  - 'newer_schema': stored data was written by a newer app version; this version never overwrites it.
+ */
+export type SaveRefusal = 'read_failed' | 'newer_schema';
+export type SaveResult = { ok: true } | { ok: false; error: string; recovery?: SaveRecovery; kind?: SaveRefusal };
+
+const versionOf = (raw: string | null): number | undefined => {
+  const v = (parse(raw) as { schemaVersion?: unknown } | undefined)?.schemaVersion;
+  return typeof v === 'number' ? v : undefined;
+};
 
 function parse(raw: string | null): unknown {
   if (raw === null) return undefined;
@@ -62,6 +73,8 @@ export function loadLocal(kv: KV): LoadResult {
 function parsePrev(kv: KV): LocalData | undefined {
   try {
     const p = parse(kv.getItem(LOCAL_PREV_KEY));
+    const v = (p as { schemaVersion?: unknown } | undefined)?.schemaVersion;
+    if (typeof v === 'number' && v > SCHEMA_VERSION) return undefined;
     return isLocalData(p) ? p : undefined;
   } catch { return undefined; }
 }
@@ -75,8 +88,20 @@ export function saveLocal(kv: KV, data: LocalData): SaveResult {
     if (!isLocalData(JSON.parse(raw))) return { ok: false, error: 'round-trip validation failed' };
   } catch (e) { return { ok: false, error: `serialize failed: ${String(e)}` }; }
 
-  let current: string | null = null;
-  try { current = kv.getItem(LOCAL_KEY); } catch { /* proceed without prev copy */ }
+  // Read the existing data first. If we cannot read it we cannot protect it: abort without writing.
+  let current: string | null;
+  let prevRaw: string | null;
+  try {
+    current = kv.getItem(LOCAL_KEY);
+    prevRaw = kv.getItem(LOCAL_PREV_KEY);
+  } catch (e) {
+    return { ok: false, kind: 'read_failed', error: `existing data could not be read; nothing was written: ${String(e)}` };
+  }
+  for (const found of [versionOf(current), versionOf(prevRaw)]) {
+    if (found !== undefined && found > SCHEMA_VERSION) {
+      return { ok: false, kind: 'newer_schema', error: `stored data has newer schemaVersion ${found} (supported ${SCHEMA_VERSION}); refusing to overwrite` };
+    }
+  }
   // Best-effort: keep last good generation. Only copy if it is itself valid.
   if (current !== null && isLocalData(parse(current))) {
     try { kv.setItem(LOCAL_PREV_KEY, current); } catch { /* ignore: main write decides success */ }

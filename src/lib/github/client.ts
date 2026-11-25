@@ -13,7 +13,9 @@ export type RefreshResult =
  * Calls the Netlify Function and stores the snapshot only on full success.
  * On any failure the existing cached snapshot is left untouched.
  */
-export async function refreshSnapshot(kv: KV, projectId: string, repo: string, fetchImpl: typeof fetch = fetch, timeoutMs = CLIENT_TIMEOUT_MS): Promise<RefreshResult> {
+export async function refreshSnapshot(kv: KV, projectId: string, repo: string, fetchImpl: typeof fetch = fetch, timeoutMs = CLIENT_TIMEOUT_MS,
+  /** Called synchronously right before saving; return false if the project/repo changed while the request was in flight. */
+  stillWanted?: (snapshot: GitHubSnapshot) => boolean): Promise<RefreshResult> {
   const keep = (error: SnapshotError): RefreshResult => ({ ok: false, error, keptPrevious: true });
   const signal = AbortSignal.timeout(timeoutMs);
   const timedOut = () => keep({ code: 'timeout', message: 'the server did not answer in time' });
@@ -27,6 +29,8 @@ export async function refreshSnapshot(kv: KV, projectId: string, repo: string, f
   try { body = await res.json(); } catch { return signal.aborted ? timedOut() : keep({ code: 'bad_response', message: 'invalid response from server' }); }
   if (!res.ok || !body?.ok) return keep(body?.error ?? { code: 'upstream_error', message: `status ${res.status}` });
   if (!isSnapshot(body.snapshot)) return keep({ code: 'bad_response', message: 'snapshot failed validation' });
+  if (body.snapshot.repo.toLowerCase() !== repo.toLowerCase()) return keep({ code: 'bad_response', message: 'snapshot is for a different repository' });
+  if (stillWanted && !stillWanted(body.snapshot)) return keep({ code: 'superseded', message: 'the project or repository changed during the sync; the result was discarded' });
   const saved = saveSnapshot(kv, projectId, body.snapshot);
   if (!saved.ok) return keep({ code: 'upstream_error', message: saved.error });
   return { ok: true, snapshot: body.snapshot };

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { LOCAL_KEY, LOCAL_PREV_KEY, loadLocal, loadSnapshot, saveLocal, saveSnapshot, snapshotKey } from '../../src/lib/storage';
-import { MemKV, sampleData } from './helpers';
+import { MemKV, sampleData, withRev } from './helpers';
 
 describe('local storage', () => {
   it('empty store loads as empty', () => {
@@ -9,7 +9,7 @@ describe('local storage', () => {
 
   it('save then load round-trips', () => {
     const kv = new MemKV();
-    expect(saveLocal(kv, sampleData()).ok).toBe(true);
+    expect(saveLocal(kv, withRev(kv, sampleData())).ok).toBe(true);
     const r = loadLocal(kv);
     expect(r.status).toBe('ok');
     expect(r.data.projects[0]?.name).toBe('P');
@@ -17,33 +17,33 @@ describe('local storage', () => {
 
   it('keeps previous generation under a second key', () => {
     const kv = new MemKV();
-    saveLocal(kv, sampleData('one'));
-    saveLocal(kv, sampleData('two'));
+    saveLocal(kv, withRev(kv, sampleData('one')));
+    saveLocal(kv, withRev(kv, sampleData('two')));
     expect(JSON.parse(kv.getItem(LOCAL_PREV_KEY)!).projects[0].name).toBe('one');
     expect(JSON.parse(kv.getItem(LOCAL_KEY)!).projects[0].name).toBe('two');
   });
 
   it('failed write (quota) keeps old data and reports failure', () => {
     const kv = new MemKV();
-    saveLocal(kv, sampleData('old'));
+    saveLocal(kv, withRev(kv, sampleData('old')));
     kv.failSet = (k) => k === LOCAL_KEY;
-    const r = saveLocal(kv, sampleData('new'));
+    const r = saveLocal(kv, withRev(kv, sampleData('new')));
     expect(r.ok).toBe(false);
     expect(loadLocal(kv).data.projects[0]?.name).toBe('old');
   });
 
   it('failure of the prev-copy write does not break the main write', () => {
     const kv = new MemKV();
-    saveLocal(kv, sampleData('old'));
+    saveLocal(kv, withRev(kv, sampleData('old')));
     kv.failSet = (k) => k === LOCAL_PREV_KEY;
-    expect(saveLocal(kv, sampleData('new')).ok).toBe(true);
+    expect(saveLocal(kv, withRev(kv, sampleData('new'))).ok).toBe(true);
     expect(loadLocal(kv).data.projects[0]?.name).toBe('new');
   });
 
   it('recovers from prev when main is corrupt', () => {
     const kv = new MemKV();
-    saveLocal(kv, sampleData('one'));
-    saveLocal(kv, sampleData('two'));
+    saveLocal(kv, withRev(kv, sampleData('one')));
+    saveLocal(kv, withRev(kv, sampleData('two')));
     kv.m.set(LOCAL_KEY, '{broken');
     const r = loadLocal(kv);
     expect(r.status).toBe('ok');
@@ -68,7 +68,7 @@ describe('local storage', () => {
 
   it('rejects invalid data before touching storage', () => {
     const kv = new MemKV();
-    saveLocal(kv, sampleData('old'));
+    saveLocal(kv, withRev(kv, sampleData('old')));
     const bad = sampleData('bad');
     bad.workSessions[0]!.durationMinutes = 5; // inconsistent with start/end
     const sets = kv.sets;
@@ -82,10 +82,10 @@ describe('snapshot storage', () => {
   const snap = { repo: 'a/b', fetchedAt: '2026-01-01T00:00:00Z', info: { fullName: 'a/b', defaultBranch: 'main', private: false, htmlUrl: '' }, issues: [], pulls: [], commits: [] };
   it('is stored under a separate key and not mixed with local data', () => {
     const kv = new MemKV();
-    saveLocal(kv, sampleData());
+    saveLocal(kv, withRev(kv, sampleData()));
     saveSnapshot(kv, 'p1', snap);
     expect(snapshotKey('p1')).not.toBe(LOCAL_KEY);
-    expect(loadLocal(kv).data).toEqual(sampleData());
+    expect(loadLocal(kv).data).toEqual({ ...sampleData(), revision: 1 });
     expect(loadSnapshot(kv, 'p1')?.repo).toBe('a/b');
   });
   it('failed snapshot write keeps the previous snapshot', () => {
@@ -111,8 +111,8 @@ describe('read-back failure and recovery', () => {
 
   it('silent corruption: previous value is restored and verified, failure is reported', () => {
     const kv = new CorruptingKV();
-    saveLocal(kv, sampleData('old'));
-    const r = saveLocal(kv, sampleData('new'));
+    saveLocal(kv, withRev(kv, sampleData('old')));
+    const r = saveLocal(kv, withRev(kv, sampleData('new')));
     expect(r).toMatchObject({ ok: false, error: 'read-back mismatch', recovery: 'restored_previous' });
     const loaded = loadLocal(kv);
     expect(loaded.status).toBe('ok');
@@ -121,7 +121,7 @@ describe('read-back failure and recovery', () => {
 
   it('first-ever save that reads back wrong is removed (nothing half-written remains)', () => {
     const kv = new CorruptingKV();
-    const r = saveLocal(kv, sampleData('new'));
+    const r = saveLocal(kv, withRev(kv, sampleData('new')));
     expect(r).toMatchObject({ ok: false, recovery: 'removed_new' });
     expect(kv.getItem(LOCAL_KEY)).toBeNull();
     expect(loadLocal(kv).status).toBe('empty');
@@ -129,9 +129,9 @@ describe('read-back failure and recovery', () => {
 
   it('restore itself fails: reported as restore_failed and load still recovers old data from prev', () => {
     const kv = new CorruptingKV();
-    saveLocal(kv, sampleData('old'));
+    saveLocal(kv, withRev(kv, sampleData('old')));
     kv.failRestore = true;
-    const r = saveLocal(kv, sampleData('new'));
+    const r = saveLocal(kv, withRev(kv, sampleData('new')));
     expect(r).toMatchObject({ ok: false, recovery: 'restore_failed' });
     expect(kv.getItem(LOCAL_KEY)).not.toBeNull(); // corrupt main is not deleted
     const loaded = loadLocal(kv);
@@ -142,31 +142,31 @@ describe('read-back failure and recovery', () => {
 
   it('getItem throwing during read-back: reported, restore attempted', () => {
     const kv = new MemKV();
-    saveLocal(kv, sampleData('old'));
+    saveLocal(kv, withRev(kv, sampleData('old')));
     const origGet = kv.getItem.bind(kv);
     let armed = false;
     const origSet = kv.setItem.bind(kv);
     kv.setItem = (k, v) => { origSet(k, v); if (k === LOCAL_KEY && v.includes('"name":"new"')) armed = true; };
     kv.getItem = (k) => { if (armed && k === LOCAL_KEY) { armed = false; throw new Error('SecurityError'); } return origGet(k); };
-    const r = saveLocal(kv, sampleData('new'));
+    const r = saveLocal(kv, withRev(kv, sampleData('new')));
     expect(r).toMatchObject({ ok: false, recovery: 'restored_previous' });
     expect(loadLocal(kv).data.projects[0]?.name).toBe('old');
   });
 
   it('successful save never reports a recovery', () => {
-    expect(saveLocal(new MemKV(), sampleData())).toEqual({ ok: true });
+    expect(saveLocal(new MemKV(), sampleData())).toEqual({ ok: true, revision: 1 });
   });
 });
 
 describe('pre-write protection', () => {
   it('aborts without writing when the existing data cannot be read', () => {
     const kv = new MemKV();
-    saveLocal(kv, sampleData('old'));
+    saveLocal(kv, withRev(kv, sampleData('old')));
     const snapshotOfMap = new Map(kv.m);
     const origGet = kv.getItem.bind(kv);
     kv.getItem = (k) => { if (k === LOCAL_KEY) throw new Error('SecurityError'); return origGet(k); };
     const sets = kv.sets;
-    const r = saveLocal(kv, sampleData('new'));
+    const r = saveLocal(kv, withRev(kv, sampleData('new')));
     expect(r).toMatchObject({ ok: false, kind: 'read_failed' });
     expect(kv.sets).toBe(sets); // no setItem at all
     expect(kv.m).toEqual(snapshotOfMap);
@@ -174,11 +174,11 @@ describe('pre-write protection', () => {
 
   it('aborts when the prev key cannot be read either', () => {
     const kv = new MemKV();
-    saveLocal(kv, sampleData('old'));
+    saveLocal(kv, withRev(kv, sampleData('old')));
     const origGet = kv.getItem.bind(kv);
     kv.getItem = (k) => { if (k === LOCAL_PREV_KEY) throw new Error('x'); return origGet(k); };
     const sets = kv.sets;
-    expect(saveLocal(kv, sampleData('new'))).toMatchObject({ ok: false, kind: 'read_failed' });
+    expect(saveLocal(kv, withRev(kv, sampleData('new')))).toMatchObject({ ok: false, kind: 'read_failed' });
     expect(kv.sets).toBe(sets);
   });
 
@@ -187,7 +187,7 @@ describe('pre-write protection', () => {
     const future = JSON.stringify({ ...sampleData('future'), schemaVersion: 99 });
     kv.m.set(LOCAL_KEY, future);
     const sets = kv.sets;
-    expect(saveLocal(kv, sampleData('new'))).toMatchObject({ ok: false, kind: 'newer_schema' });
+    expect(saveLocal(kv, withRev(kv, sampleData('new')))).toMatchObject({ ok: false, kind: 'newer_schema' });
     expect(kv.sets).toBe(sets);
     expect(kv.getItem(LOCAL_KEY)).toBe(future);
   });
@@ -196,7 +196,7 @@ describe('pre-write protection', () => {
     const kv = new MemKV();
     const future = JSON.stringify({ ...sampleData('future'), schemaVersion: 7 });
     kv.m.set(LOCAL_PREV_KEY, future);
-    expect(saveLocal(kv, sampleData('new'))).toMatchObject({ ok: false, kind: 'newer_schema' });
+    expect(saveLocal(kv, withRev(kv, sampleData('new')))).toMatchObject({ ok: false, kind: 'newer_schema' });
     expect(kv.getItem(LOCAL_PREV_KEY)).toBe(future);
     expect(kv.getItem(LOCAL_KEY)).toBeNull();
   });
@@ -210,7 +210,7 @@ describe('pre-write protection', () => {
   it('a corrupt (not newer) main may still be replaced by an explicit save', () => {
     const kv = new MemKV();
     kv.m.set(LOCAL_KEY, '{broken');
-    expect(saveLocal(kv, sampleData('fresh')).ok).toBe(true);
+    expect(saveLocal(kv, withRev(kv, sampleData('fresh'))).ok).toBe(true);
   });
 });
 

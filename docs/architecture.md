@@ -54,3 +54,6 @@ tests/unit (Vitest)   tests/e2e (Playwright)
 - CORS: function same-origin only.
 - Input validation on `repo`; allow-list; GET-only upstream.
 - localStorage is readable by any script on the origin: store no secrets there.
+
+## Phase 1C notes
+Data protection was extended (schema migration with raw pre-migration copy, revision-based multi-tab conflict refusal, cache/project consistency). Details: data-model.md "Phase 1C changes". Multi-tab exclusion is best effort and its limit is documented there.

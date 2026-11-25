@@ -78,3 +78,34 @@ Project 1-N Task, Project 1-N WorkSession, Task 1-N WorkSession, Agent 1-N Task/
 - WorkSession validation: `source === 'manual'`; durations >= 0; `endedAt >= startedAt`; if start, end and duration are all present they must agree within 1 minute; start/end must be given together unless only a duration is given; at least one time field is required.
 - Authoritative types are in `src/types/index.ts` (the TS block above is the Phase 0 sketch).
 - Export/import JSON of `adc:local:v1` provides backup (Phase 1, optional).
+
+## Phase 1C changes (schema v2)
+Authoritative types: `src/types/index.ts`. `SCHEMA_VERSION = 2`.
+
+| Change | v1 | v2 |
+|---|---|---|
+| Agent roles | `role` (one of developer / reviewer) | `roles` (1+ of dev_manager, dev_lead, spec_design, developer, reviewer, qa) |
+| Agent kind | claude-code-web, codex-cloud, human, other | chatgpt, claude-code-web, claude-code-cli, codex-cloud, codex-cli, gemini, other; `human` stays valid as a legacy value (not offered for new agents) |
+| WorkSession date | none | optional `workDate` (YYYY-MM-DD, local calendar date). Range sessions use the local date of `startedAt`. Old records stay undated: **no date is ever invented** |
+| LocalData | - | `revision` (non-negative integer save counter) |
+
+### Migration (`src/lib/migrations.ts`)
+- Pure function chain v1 -> v2; never mutates its input; result must pass validation or the migration fails.
+- Loading older data migrates **in memory only**; nothing is written on load.
+- First save that would replace older-schema data first writes the raw old value to `adc:premigration:v<N>` (never overwritten; a differing value goes to `:1`, `:2`...). If that write fails the save is refused and the old data stays.
+- Migration failure: status `migration_failed`, data untouched, editing blocked, raw data downloadable from the data page. An explicit restore/"start fresh" is still possible but also keeps the raw copy first.
+- Old (v1) backup files are migrated on import. Backups no longer contain `revision`.
+- Newer unknown schema: read-only, never overwritten (main or prev key).
+
+### Multi-tab protection
+- Every save writes `revision + 1` and is refused (`kind: 'conflict'`, nothing written) if the stored revision differs from the revision the tab holds.
+- A `storage` event from another tab puts this tab in `stale` mode at once: editing and restore are disabled, banner offers reload; backup download stays possible.
+- **Limit:** the check and the write are separate synchronous steps and browsers do not guarantee mutual exclusion of localStorage across tabs, so two tabs saving in the same instant cannot be excluded. Web Locks was considered but not used: it is asynchronous and would make every save asynchronous; it would also not protect against environments without it. The UI states this limit.
+
+### GitHub cache integrity
+- A snapshot is shown only if its `repo` equals the project's current repo (case-insensitive) and the project exists.
+- Changing a project's repo, deleting a project, or restoring a backup removes caches that no longer match (cache only; local data is never touched).
+- A sync result is saved only if, at the moment the response arrives, the project still exists with the same repo; otherwise it is discarded (`superseded`) and not reported against the current repo.
+
+### Approval
+Editing the title, notes, project or Issue/PR links of an approved task revokes approval and returns it to `awaiting_owner`; the form warns first and asks for confirmation. Assignee-only edits keep the approval. GitHub merged state and owner approval are displayed and stored separately.

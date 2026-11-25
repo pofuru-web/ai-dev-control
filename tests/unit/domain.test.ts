@@ -5,7 +5,7 @@ import { ghCommit, ghIssue, ghPull, ghRepo, sampleData } from './helpers';
 import { normalizeCommits, normalizeIssues, normalizePulls, normalizeRepo } from '../../src/lib/github/normalize';
 
 const NOW = '2026-02-01T00:00:00.000Z';
-const base = () => D.addAgent(D.addProject(emptyLocalData(), { name: 'P', status: 'active' }, 'p1', NOW), { name: 'Claude', kind: 'claude-code-web', role: 'developer' }, 'a1');
+const base = () => D.addAgent(D.addProject(emptyLocalData(), { name: 'P', status: 'active' }, 'p1', NOW), { name: 'Claude', kind: 'claude-code-web', roles: ['developer'] }, 'a1');
 const withTask = () => D.addTask(base(), { projectId: 'p1', title: 'T' }, 't1', NOW);
 const throwsJa = (f: () => unknown) => expect(f).toThrow(D.DomainError);
 
@@ -95,7 +95,7 @@ describe('work sessions', () => {
     throwsJa(() => D.addSession(b, { projectId: 'p1', agentId: 'nope', mode: 'duration', durationMinutes: '5' }, 'w'));
   });
   it('aggregates by project and agent', () => {
-    let d = D.addAgent(base(), { name: 'Codex', kind: 'codex-cloud', role: 'reviewer' }, 'a2');
+    let d = D.addAgent(base(), { name: 'Codex', kind: 'codex-cloud', roles: ['reviewer'] }, 'a2');
     d = D.addSession(d, { projectId: 'p1', agentId: 'a1', mode: 'duration', durationMinutes: '30' }, 'w1');
     d = D.addSession(d, { projectId: 'p1', agentId: 'a1', mode: 'duration', durationMinutes: '15' }, 'w2');
     d = D.addSession(d, { projectId: 'p1', agentId: 'a2', mode: 'duration', durationMinutes: '5' }, 'w3');

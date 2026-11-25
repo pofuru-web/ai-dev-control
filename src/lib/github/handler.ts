@@ -17,7 +17,7 @@ const json = (status: number, body: unknown, extra: Record<string, string> = {})
 
 const errStatus: Record<SnapshotError['code'], number> = {
   invalid_repo: 400, not_allowed: 403, method_not_allowed: 405, rate_limited: 429,
-  not_found: 404, private_repo: 403, upstream_error: 502, bad_response: 502, network: 502, timeout: 504,
+  not_found: 404, private_repo: 403, upstream_error: 502, bad_response: 502, network: 502, timeout: 504, superseded: 409,
 };
 
 /** Builds the request handler. Token is read from server env only and never included in a response. */

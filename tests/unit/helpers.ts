@@ -16,9 +16,10 @@ export class MemKV implements KV {
 
 export const T = '2026-01-01T00:00:00.000Z';
 export const sampleData = (name = 'P'): LocalData => ({
-  schemaVersion: 1,
+  schemaVersion: 2,
+  revision: 0,
   projects: [{ id: 'p1', name, status: 'active', createdAt: T, updatedAt: T }],
-  agents: [{ id: 'a1', name: 'Claude', kind: 'claude-code-web', role: 'developer' }],
+  agents: [{ id: 'a1', name: 'Claude', kind: 'claude-code-web', roles: ['developer'] }],
   tasks: [{ id: 't1', projectId: 'p1', title: 'x', status: 'todo', links: {}, ownerApproved: false, createdAt: T, updatedAt: T }],
   workSessions: [{ id: 'w1', projectId: 'p1', agentId: 'a1', startedAt: '2026-01-01T00:00:00Z', endedAt: '2026-01-01T01:00:00Z', durationMinutes: 60, source: 'manual' }],
 });
@@ -29,3 +30,11 @@ export const ghRepo = (over: Record<string, unknown> = {}) => ({ full_name: 'pof
 export const ghIssue = (n: number, over: Record<string, unknown> = {}) => ({ number: n, title: `issue ${n}`, state: 'open', user: { login: 'u' }, created_at: '2026-01-01T00:00:00Z', closed_at: null, html_url: `https://x/i/${n}`, labels: [{ name: 'bug' }, 'raw'], ...over });
 export const ghPull = (n: number, over: Record<string, unknown> = {}) => ({ number: n, title: `pr ${n}`, state: 'open', merged_at: null, user: { login: 'u' }, head: { ref: 'h' }, base: { ref: 'main' }, created_at: '2026-01-02T00:00:00Z', html_url: `https://x/p/${n}`, ...over });
 export const ghCommit = (c = 'a', over: Record<string, unknown> = {}) => ({ sha: SHA(c), html_url: 'https://x/c', author: { login: 'me' }, commit: { message: 'm', author: { name: 'Me' }, committer: { date: '2026-01-01T00:00:00Z' } }, ...over });
+
+/** Returns `data` re-based on the revision currently stored in `kv` (what a tab that has just loaded would hold). */
+export function withRev(kv: MemKV, data: LocalData): LocalData {
+  const raw = kv.m.get('adc:local:v1') ?? null;
+  let rev = 0;
+  try { const p = raw ? JSON.parse(raw) : undefined; if (typeof p?.revision === 'number') rev = p.revision; } catch { /* corrupt: base 0 */ }
+  return { ...data, revision: rev };
+}

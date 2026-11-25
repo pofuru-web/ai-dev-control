@@ -42,3 +42,29 @@ export const snapshotJson = (over: Record<string, unknown> = {}) => ({
 });
 
 export const fulfillJson = (route: Route, status: number, body: unknown) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+
+/** Seeds localStorage once per tab (survives reloads without being re-applied). */
+export async function seedOnce(page: Page, key: string, value: string) {
+  await page.addInitScript(([k, v]) => { if (!sessionStorage.getItem('seeded:' + k)) { localStorage.setItem(k as string, v as string); sessionStorage.setItem('seeded:' + k, '1'); } }, [key, value]);
+}
+
+export const snapshotFor = (repo: string) => {
+  const j = snapshotJson();
+  const s = j.snapshot as Record<string, unknown>;
+  s.repo = repo;
+  (s.info as Record<string, unknown>).fullName = repo;
+  (s.issues as { title: string }[])[0]!.title = `issue of ${repo}`;
+  return j;
+};
+
+export async function editProjectRepo(page: Page, name: string, repo: string) {
+  await nav(page, 'プロジェクト');
+  const card = page.locator('section', { has: page.getByRole('heading', { name }) });
+  await card.getByRole('button', { name: '編集' }).click();
+  const dlg = page.getByRole('dialog');
+  await dlg.getByPlaceholder('owner/name').fill(repo);
+  await dlg.getByRole('button', { name: '保存' }).click();
+  await expect(dlg).toHaveCount(0);
+}
+
+export const snapshotKeys = (page: Page) => page.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith('adc:snapshot:')));

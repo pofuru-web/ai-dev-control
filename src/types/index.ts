@@ -11,11 +11,18 @@ export interface Project {
   updatedAt: ISODate;
 }
 
+/** 'human' is a legacy (schema v1) kind: still valid for existing data, no longer offered for new agents. */
+export const AGENT_KINDS = ['chatgpt', 'claude-code-web', 'claude-code-cli', 'codex-cloud', 'codex-cli', 'gemini', 'other', 'human'] as const;
+export type AgentKind = (typeof AGENT_KINDS)[number];
+export const AGENT_ROLES = ['dev_manager', 'dev_lead', 'spec_design', 'developer', 'reviewer', 'qa'] as const;
+export type AgentRole = (typeof AGENT_ROLES)[number];
+
 export interface Agent {
   id: Id;
   name: string;
-  kind: 'claude-code-web' | 'codex-cloud' | 'human' | 'other';
-  role: 'developer' | 'reviewer';
+  kind: AgentKind;
+  /** One or more roles (schema v2; v1 had a single `role`). Non-empty, no duplicates. */
+  roles: AgentRole[];
 }
 
 export type TaskStatus = 'todo' | 'in_progress' | 'in_review' | 'awaiting_owner' | 'done' | 'blocked';
@@ -43,6 +50,8 @@ export interface WorkSession {
   startedAt?: ISODate;
   endedAt?: ISODate;
   durationMinutes?: number;
+  /** Work day as local calendar date YYYY-MM-DD (schema v2). Absent for old records: never back-filled. */
+  workDate?: string;
   source: 'manual';
   note?: string;
 }
@@ -50,6 +59,11 @@ export interface WorkSession {
 /** Human-authored data. Source of truth. Never touched by GitHub fetches. */
 export interface LocalData {
   schemaVersion: number;
+  /**
+   * Save counter used for multi-tab conflict detection. It is the revision this tab last loaded/saved;
+   * a save is refused when the stored revision differs.
+   */
+  revision: number;
   projects: Project[];
   agents: Agent[];
   tasks: Task[];
@@ -115,7 +129,7 @@ export interface GitHubSnapshot {
   rateLimit?: RateLimitInfo;
 }
 
-export type SnapshotErrorCode = 'invalid_repo' | 'not_allowed' | 'rate_limited' | 'not_found' | 'private_repo' | 'upstream_error' | 'bad_response' | 'network' | 'timeout' | 'method_not_allowed';
+export type SnapshotErrorCode = 'invalid_repo' | 'not_allowed' | 'rate_limited' | 'not_found' | 'private_repo' | 'upstream_error' | 'bad_response' | 'network' | 'timeout' | 'method_not_allowed' | 'superseded';
 
 export interface SnapshotError {
   code: SnapshotErrorCode;

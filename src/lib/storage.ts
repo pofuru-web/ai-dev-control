@@ -1,5 +1,6 @@
 import type { GitHubSnapshot, LocalData } from '../types';
 import { SCHEMA_VERSION, emptyLocalData, isLocalData, isSnapshot, localDataProblems } from './validate';
+import { migrateLocalData } from './migrations';
 
 export interface KV {
   getItem(key: string): string | null;
@@ -9,12 +10,15 @@ export interface KV {
 
 export const LOCAL_KEY = 'adc:local:v1';
 export const LOCAL_PREV_KEY = 'adc:local:v1:prev';
+/** Raw copy of data from an older schema, written once before the first save that would replace it. Never deleted by the app. */
+export const premigrationKey = (fromVersion: number, index = 0) => `adc:premigration:v${fromVersion}${index ? `:${index}` : ''}`;
 export const snapshotKey = (projectId: string) => `adc:snapshot:v1:${projectId}`;
 
 export type LoadResult =
-  | { status: 'ok'; data: LocalData; recoveredFromPrev?: boolean }
+  | { status: 'ok'; data: LocalData; recoveredFromPrev?: boolean; migratedFrom?: number }
   | { status: 'empty'; data: LocalData }
   | { status: 'readonly_newer_schema'; data: LocalData; foundVersion: number }
+  | { status: 'migration_failed'; data: LocalData; fromVersion: number; error: string }
   | { status: 'corrupt'; data: LocalData; problems: string[] };
 
 /**
@@ -29,9 +33,11 @@ export type SaveRecovery = 'restored_previous' | 'removed_new' | 'restore_failed
  * kind (only for refusals made BEFORE any write was attempted; nothing was changed):
  *  - 'read_failed': the existing data could not be read, so overwriting it blindly was refused.
  *  - 'newer_schema': stored data was written by a newer app version; this version never overwrites it.
+ *  - 'conflict': the stored revision differs from the revision this tab loaded (another tab saved in between).
+ *  - 'migration_backup_failed': the raw pre-migration copy could not be written, so the old data was not replaced.
  */
-export type SaveRefusal = 'read_failed' | 'newer_schema';
-export type SaveResult = { ok: true } | { ok: false; error: string; recovery?: SaveRecovery; kind?: SaveRefusal };
+export type SaveRefusal = 'read_failed' | 'newer_schema' | 'conflict' | 'migration_backup_failed';
+export type SaveResult = { ok: true; revision: number } | { ok: false; error: string; recovery?: SaveRecovery; kind?: SaveRefusal };
 
 const versionOf = (raw: string | null): number | undefined => {
   const v = (parse(raw) as { schemaVersion?: unknown } | undefined)?.schemaVersion;
@@ -64,6 +70,12 @@ export function loadLocal(kv: KV): LoadResult {
   if (typeof ver === 'number' && ver > SCHEMA_VERSION) {
     return { status: 'readonly_newer_schema', data: emptyLocalData(), foundVersion: ver };
   }
+  if (typeof ver === 'number' && ver < SCHEMA_VERSION) {
+    // Older schema: migrate in memory only. Nothing is written here; the raw value stays untouched.
+    const m = migrateLocalData(parsed);
+    if (m.ok) return { status: 'ok', data: m.data, migratedFrom: m.fromVersion };
+    return { status: 'migration_failed', data: emptyLocalData(), fromVersion: ver, error: m.error };
+  }
   if (isLocalData(parsed)) return { status: 'ok', data: parsed };
   const prev = parsePrev(kv);
   if (prev) return { status: 'ok', data: prev, recoveredFromPrev: true };
@@ -75,16 +87,36 @@ function parsePrev(kv: KV): LocalData | undefined {
     const p = parse(kv.getItem(LOCAL_PREV_KEY));
     const v = (p as { schemaVersion?: unknown } | undefined)?.schemaVersion;
     if (typeof v === 'number' && v > SCHEMA_VERSION) return undefined;
-    return isLocalData(p) ? p : undefined;
+    if (isLocalData(p)) return p;
+    if (typeof v === 'number' && v < SCHEMA_VERSION) { const m = migrateLocalData(p); return m.ok ? m.data : undefined; }
+    return undefined;
   } catch { return undefined; }
 }
 
+/** Revision stored in a raw main value: undefined if unreadable/invalid, 0 for pre-revision (v1) data. */
+function storedRevision(raw: string | null): number | undefined {
+  const p = parse(raw);
+  if (typeof p !== 'object' || p === null) return undefined;
+  const o = p as { schemaVersion?: unknown; revision?: unknown };
+  if (typeof o.schemaVersion !== 'number') return undefined;
+  if (o.schemaVersion < SCHEMA_VERSION) return migrateLocalData(p).ok ? 0 : undefined;
+  return isLocalData(p) ? (o.revision as number) : undefined;
+}
+
+/**
+ * Saves `data` as revision data.revision + 1. `data.revision` is the revision this caller last loaded or saved;
+ * if the stored value has a different revision (another tab saved meanwhile) nothing is written ('conflict').
+ * Limit: the check and the write are two synchronous steps, and browsers do not guarantee that localStorage
+ * access from different tabs is mutually exclusive, so a collision inside that window cannot be excluded.
+ */
 export function saveLocal(kv: KV, data: LocalData): SaveResult {
   const problems = localDataProblems(data);
   if (problems.length) return { ok: false, error: `validation failed: ${problems.join('; ')}` };
   let raw: string;
+  let nextRevision: number;
   try {
-    raw = JSON.stringify({ ...data, schemaVersion: SCHEMA_VERSION });
+    nextRevision = data.revision + 1;
+    raw = JSON.stringify({ ...data, schemaVersion: SCHEMA_VERSION, revision: nextRevision });
     if (!isLocalData(JSON.parse(raw))) return { ok: false, error: 'round-trip validation failed' };
   } catch (e) { return { ok: false, error: `serialize failed: ${String(e)}` }; }
 
@@ -102,6 +134,25 @@ export function saveLocal(kv: KV, data: LocalData): SaveResult {
       return { ok: false, kind: 'newer_schema', error: `stored data has newer schemaVersion ${found} (supported ${SCHEMA_VERSION}); refusing to overwrite` };
     }
   }
+  const found = storedRevision(current);
+  if (found !== undefined && found !== data.revision) {
+    return { ok: false, kind: 'conflict', error: `stored revision ${found} differs from this tab's revision ${data.revision}; another tab or window saved newer data` };
+  }
+  // Old-schema data is about to be replaced: keep a raw copy first. If that fails, do not replace it.
+  const curVer = versionOf(current);
+  if (current !== null && curVer !== undefined && curVer < SCHEMA_VERSION) {
+    try {
+      let i = 0;
+      for (; i < 5; i++) {
+        const existing = kv.getItem(premigrationKey(curVer, i));
+        if (existing === current) break;
+        if (existing === null) { kv.setItem(premigrationKey(curVer, i), current); break; }
+      }
+      if (i >= 5) throw new Error('too many pre-migration copies');
+    } catch (e) {
+      return { ok: false, kind: 'migration_backup_failed', error: `could not keep a copy of the old data; it was not replaced: ${String(e)}` };
+    }
+  }
   // Best-effort: keep last good generation. Only copy if it is itself valid.
   if (current !== null && isLocalData(parse(current))) {
     try { kv.setItem(LOCAL_PREV_KEY, current); } catch { /* ignore: main write decides success */ }
@@ -116,7 +167,7 @@ export function saveLocal(kv: KV, data: LocalData): SaveResult {
   try {
     if (kv.getItem(LOCAL_KEY) !== raw) readBackProblem = 'read-back mismatch';
   } catch (e) { readBackProblem = `read-back failed: ${String(e)}`; }
-  if (readBackProblem === undefined) return { ok: true };
+  if (readBackProblem === undefined) return { ok: true, revision: nextRevision };
   return { ok: false, error: readBackProblem, recovery: restoreAfterBadWrite(kv, current) };
 }
 
@@ -140,7 +191,7 @@ export function loadSnapshot(kv: KV, projectId: string): GitHubSnapshot | undefi
 }
 
 /** Replaces the cached snapshot only if the new one is valid; otherwise leaves the old one. */
-export function saveSnapshot(kv: KV, projectId: string, snap: GitHubSnapshot): SaveResult {
+export function saveSnapshot(kv: KV, projectId: string, snap: GitHubSnapshot): { ok: true } | { ok: false; error: string } {
   if (!isSnapshot(snap)) return { ok: false, error: 'invalid snapshot' };
   try {
     kv.setItem(snapshotKey(projectId), JSON.stringify(snap));

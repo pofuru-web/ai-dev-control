@@ -1,9 +1,9 @@
 import { useState } from 'react';
 import { useApp } from '../state/AppState';
-import { STATUS_LABEL, STATUS_ORDER, addTask, approveTask, deleteTask, moveTask, updateTask, type TaskInput } from '../lib/domain';
+import { STATUS_LABEL, STATUS_ORDER, addTask, approveTask, deleteTask, editRevokesApproval, linkInfo, moveTask, updateTask, type LinkState, type TaskInput } from '../lib/domain';
 import { fmtDateTime, safeGithubUrl } from '../lib/format';
-import type { GitHubSnapshot, Task, TaskStatus } from '../types';
-import { Badge, Btn, Confirm, Empty, Field, Modal, inputCls } from '../ui/kit';
+import type { Task, TaskStatus } from '../types';
+import { Badge, Banner, Btn, Confirm, Empty, Field, Modal, inputCls } from '../ui/kit';
 
 const COL_TONE: Record<TaskStatus, string> = { todo: 'border-slate-600', in_progress: 'border-emerald-600', in_review: 'border-sky-600', awaiting_owner: 'border-amber-500', done: 'border-violet-600', blocked: 'border-rose-600' };
 
@@ -14,14 +14,25 @@ function TaskForm({ initial, defaultProject, onClose }: { initial?: Task; defaul
     assigneeAgentId: initial?.assigneeAgentId ?? '', issueNumber: initial?.links.issueNumber?.toString() ?? '', prNumber: initial?.links.prNumber?.toString() ?? '',
   });
   const [error, setError] = useState('');
-  const submit = () => {
+  const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const save = () => {
     const now = app.now();
     const r = app.run((d) => (initial ? updateTask(d, initial.id, v, now) : addTask(d, v, app.newId(), now)));
-    if (r.ok) onClose(); else setError(r.error);
+    if (r.ok) onClose(); else { setError(r.error); setConfirmRevoke(false); }
+  };
+  const submit = () => {
+    let revokes: boolean;
+    try { revokes = !!initial && editRevokesApproval(app.data, initial.id, v); } catch { revokes = false; /* validation errors surface from save() */ }
+    if (revokes) setConfirmRevoke(true); else save();
   };
   return (
     <Modal title={initial ? 'タスクを編集' : 'タスクを追加'} onClose={onClose}>
       <div className="space-y-3">
+        {initial?.ownerApproved && (
+          <Banner tone="warn" title="このタスクは家主承認済みです">
+            <p>タイトル・メモ・プロジェクト・Issue/PR番号を変更して保存すると、承認が取り消されて「承認待ち」に戻り、家主の再承認が必要になります。担当者の変更のみなら承認は維持されます。</p>
+          </Banner>
+        )}
         <Field label="プロジェクト">
           <select className={inputCls} value={v.projectId} onChange={(e) => setV({ ...v, projectId: e.target.value })}>
             <option value="">選択してください</option>
@@ -43,25 +54,24 @@ function TaskForm({ initial, defaultProject, onClose }: { initial?: Task; defaul
         {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
         <div className="flex justify-end gap-2"><Btn onClick={onClose}>キャンセル</Btn><Btn tone="primary" onClick={submit}>保存</Btn></div>
       </div>
+      {confirmRevoke && (
+        <Confirm title="承認が取り消されます" confirmLabel="承認を取り消して保存" onCancel={() => setConfirmRevoke(false)}
+          body={<><p>この変更を保存すると家主承認が取り消され、タスクは「承認待ち」に戻ります。</p><p>完了にするには、あらためて家主の承認操作が必要です。</p></>}
+          onConfirm={save} />
+      )}
     </Modal>
   );
 }
 
-function LinkBadges({ task, snap }: { task: Task; snap?: GitHubSnapshot }) {
-  const out = [];
-  const { issueNumber, prNumber } = task.links;
-  if (issueNumber !== undefined) {
-    const i = snap?.issues.find((x) => x.number === issueNumber);
-    out.push(<Badge key="i" tone="blue">Issue #{issueNumber}{i ? `（${i.state === 'closed' ? 'クローズ' : 'オープン'}）` : ''}</Badge>);
-  }
-  if (prNumber !== undefined) {
-    const p = snap?.pulls.find((x) => x.number === prNumber);
-    const label = p ? (p.merged ? 'マージ済み' : p.state === 'closed' ? 'クローズ（未マージ）' : 'オープン') : '';
-    const href = p ? safeGithubUrl(p.url) : undefined;
-    const b = <Badge key="p" tone={p?.merged ? 'purple' : 'slate'}>PR #{prNumber}{label ? `（${label}）` : ''}</Badge>;
-    out.push(href ? <a key="pl" href={href} target="_blank" rel="noreferrer noopener">{b}</a> : b);
-  }
-  return <>{out}</>;
+function LinkLine({ label, st }: { label: string; st: LinkState }) {
+  if (st.kind === 'unset') return <div className="text-slate-500">{label}: 紐付けなし</div>;
+  if (st.kind === 'no_snapshot') return <div>{label} #{st.number}: <span className="text-slate-400">状態不明（GitHub未同期）</span></div>;
+  if (st.kind === 'not_in_latest') return <div>{label} #{st.number}: <span className="text-slate-400">最新30件に見つかりません</span></div>;
+  const href = safeGithubUrl(st.url);
+  const text = `#${st.number}`;
+  return (
+    <div>{label} {href ? <a className="text-sky-300 hover:underline" href={href} target="_blank" rel="noreferrer noopener">{text}</a> : text}: <Badge tone={st.merged ? 'purple' : 'slate'}>{st.label}</Badge></div>
+  );
 }
 
 export default function Tasks() {
@@ -101,8 +111,16 @@ export default function Tasks() {
                   <article key={t.id} data-testid="task-card" className="rounded-md border border-slate-700 bg-slate-800 p-2 text-sm">
                     <div className="font-medium">{t.title}</div>
                     <div className="text-xs text-slate-400">{projName(t.projectId)} · {agentName(t.assigneeAgentId) ?? '未割り当て'}</div>
-                    <div className="mt-1 flex flex-wrap gap-1"><LinkBadges task={t} snap={snapshots[t.projectId]} /></div>
-                    {t.ownerApproved && <div className="mt-1 text-xs text-violet-300">家主承認済み {fmtDateTime(t.approvedAt)}</div>}
+                    {(() => { const li = linkInfo(t, snapshots[t.projectId]); return (
+                      <div data-testid="gh-links" className="mt-2 rounded border border-slate-700 bg-slate-900/60 p-1.5 text-xs">
+                        <div className="mb-0.5 font-semibold text-slate-400">GitHubの状態</div>
+                        <LinkLine label="Issue" st={li.issue} />
+                        <LinkLine label="PR" st={li.pr} />
+                      </div>); })()}
+                    <div data-testid="owner-approval" className="mt-1 rounded border border-slate-700 bg-slate-900/60 p-1.5 text-xs">
+                      <span className="font-semibold text-slate-400">家主の承認: </span>
+                      {t.ownerApproved ? <span className="text-violet-300">承認済み（{fmtDateTime(t.approvedAt)}）</span> : <span className="text-slate-300">未承認</span>}
+                    </div>
                     <div className="mt-2 flex flex-wrap items-center gap-1">
                       <select aria-label={`${t.title} の状態を変更`} className="rounded border border-slate-600 bg-slate-900 px-1 py-1 text-xs" disabled={ro} value={t.status}
                         onChange={(e) => { const to = e.target.value as TaskStatus; const r = app.run((d) => moveTask(d, t.id, to, app.now())); setErr(r.ok ? '' : r.error); }}>

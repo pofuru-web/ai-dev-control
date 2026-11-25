@@ -37,6 +37,22 @@ function Notices({ go }: { go: (p: PageId) => void }) {
           <p>データは変更していません。バックアップから復元するか、空の状態で開始してください（それまで編集は無効です）。</p>
         </Banner>
       )}
+      {app.mode === 'stale' && (
+        <Banner tone="error" title="このタブのデータは古くなっています" actions={<><Btn tone="primary" onClick={() => window.location.reload()}>最新のデータを読み込む</Btn>{toData}</>}>
+          <p data-testid="stale-reason">{app.staleReason}</p>
+          <p>上書きを防ぐため、このタブでは編集・保存を止めています。まず「最新のデータを読み込む」で再読み込みしてください。このタブで直前に入力した内容は保存されていません。必要ならその前に「データ管理」でバックアップをダウンロードできます（このタブが保持している古い内容になります）。</p>
+        </Banner>
+      )}
+      {app.loadInfo.migrationFailed && (
+        <Banner tone="error" title="旧形式のデータを新形式に変換できませんでした" actions={toData}>
+          <p>元のデータは一切変更していません（{app.loadInfo.migrationFailed.error}）。「データ管理」から元データをダウンロードして保管してください。</p>
+        </Banner>
+      )}
+      {app.loadInfo.migratedFrom !== undefined && app.mode === 'normal' && (
+        <Banner tone="info" title="旧形式のデータを新形式に変換して表示しています">
+          <p>変換はまだ保存されていません。最初に保存するとき、変換前の元データを別の場所に控えてから保存します。</p>
+        </Banner>
+      )}
       {app.loadInfo.recoveredFromPrev && (
         <Banner tone="warn" title="直前の世代のデータから復旧しました">
           <p>最新の保存データが読めなかったため、ひとつ前の保存内容を表示しています。直近の変更が含まれていない可能性があります。</p>

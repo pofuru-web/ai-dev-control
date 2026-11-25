@@ -1,6 +1,6 @@
-import type { Agent, GitHubSnapshot, Id, LocalData, Project, Task, TaskStatus, WorkSession } from '../types';
+import { AGENT_KINDS, AGENT_ROLES, type AgentKind, type AgentRole, type GitHubSnapshot, type Id, type LocalData, type Project, type Task, type TaskStatus, type WorkSession } from '../types';
 import { REPO_RE } from './github/fetchSnapshot';
-import { workSessionProblems } from './validate';
+import { isWorkDate, workSessionProblems } from './validate';
 
 /** Pure data operations. They never touch storage; on invalid input they throw Error with a user-facing (Japanese) message. */
 
@@ -54,10 +54,25 @@ export function deleteProject(d: LocalData, id: Id): LocalData {
 }
 
 // ---- agents
-export function addAgent(d: LocalData, i: Pick<Agent, 'name' | 'kind' | 'role'>, id: Id): LocalData {
+export interface AgentInput { name: string; kind: AgentKind; roles: AgentRole[] }
+
+function cleanAgent(i: AgentInput) {
   const name = i.name.trim();
   if (!name) err('担当者名を入力してください');
-  return { ...d, agents: [...d.agents, { id, name, kind: i.kind, role: i.role }] };
+  if (!(AGENT_KINDS as readonly string[]).includes(i.kind)) err('種別が正しくありません');
+  const roles = AGENT_ROLES.filter((r) => i.roles.includes(r)); // canonical order, no duplicates
+  if (roles.length === 0) err('役割を1つ以上選択してください');
+  if (roles.length !== new Set(i.roles).size) err('役割が正しくありません');
+  return { name, kind: i.kind, roles };
+}
+export function addAgent(d: LocalData, i: AgentInput, id: Id): LocalData {
+  return { ...d, agents: [...d.agents, { id, ...cleanAgent(i) }] };
+}
+/** Edits name/kind/roles. The agent id is kept, so tasks and work sessions stay linked. */
+export function updateAgent(d: LocalData, id: Id, i: AgentInput): LocalData {
+  if (!d.agents.some((a) => a.id === id)) err('担当者が見つかりません');
+  const c = cleanAgent(i);
+  return { ...d, agents: d.agents.map((a) => (a.id === id ? { ...a, ...c } : a)) };
 }
 export function deleteAgent(d: LocalData, id: Id): LocalData {
   if (d.workSessions.some((w) => w.agentId === id)) err('作業時間の記録があるため削除できません');
@@ -90,10 +105,29 @@ export function addTask(d: LocalData, i: TaskInput, id: Id, now: string): LocalD
   const t: Task = { id, ...cleanTask(d, i), status: 'todo', ownerApproved: false, createdAt: now, updatedAt: now };
   return { ...d, tasks: [...d.tasks, t] };
 }
+/**
+ * Substantive = what the owner approved: title, notes, project, Issue/PR links.
+ * Changing only the assignee is not substantive.
+ */
+export function isSubstantiveEdit(t: Task, c: ReturnType<typeof cleanTask>): boolean {
+  return t.title !== c.title || (t.notes ?? '') !== (c.notes ?? '') || t.projectId !== c.projectId ||
+    t.links.issueNumber !== c.links.issueNumber || t.links.prNumber !== c.links.prNumber;
+}
+/** True when saving this edit would revoke an existing owner approval (used to warn before saving). */
+export function editRevokesApproval(d: LocalData, id: Id, i: TaskInput): boolean {
+  const t = d.tasks.find((x) => x.id === id);
+  if (!t || !t.ownerApproved) return false;
+  return isSubstantiveEdit(t, cleanTask(d, i));
+}
+/** Editing an approved task's substance revokes the approval and returns it to 'awaiting_owner' (re-approval required). */
 export function updateTask(d: LocalData, id: Id, i: TaskInput, now: string): LocalData {
   const c = cleanTask(d, i);
-  if (!d.tasks.some((t) => t.id === id)) err('タスクが見つかりません');
-  return { ...d, tasks: d.tasks.map((t) => (t.id === id ? { ...t, ...c, updatedAt: now } : t)) };
+  const t = d.tasks.find((x) => x.id === id);
+  if (!t) return err('タスクが見つかりません');
+  const revoke = t.ownerApproved && isSubstantiveEdit(t, c);
+  const next: Task = { ...t, ...c, updatedAt: now };
+  if (revoke) { next.status = 'awaiting_owner'; next.ownerApproved = false; next.approvedAt = undefined; }
+  return { ...d, tasks: d.tasks.map((x) => (x.id === id ? next : x)) };
 }
 /** Moves a task. 'done' is reachable only through approveTask; leaving 'done' revokes the approval. */
 export function moveTask(d: LocalData, id: Id, to: TaskStatus, now: string): LocalData {
@@ -117,9 +151,9 @@ export function deleteTask(d: LocalData, id: Id): LocalData {
 }
 
 // ---- work sessions (manual only)
-export interface SessionInput { projectId: Id; taskId?: Id; agentId: Id; mode: 'range' | 'duration'; startedAt?: string; endedAt?: string; durationMinutes?: string; note?: string }
+export interface SessionInput { projectId: Id; taskId?: Id; agentId: Id; mode: 'range' | 'duration'; startedAt?: string; endedAt?: string; durationMinutes?: string; workDate?: string; note?: string }
 
-export function addSession(d: LocalData, i: SessionInput, id: Id): LocalData {
+function buildSession(d: LocalData, i: SessionInput, id: Id): WorkSession {
   if (!d.projects.some((p) => p.id === i.projectId)) err('プロジェクトを選択してください');
   if (!d.agents.some((a) => a.id === i.agentId)) err('担当者を選択してください');
   if (i.taskId && !d.tasks.some((t) => t.id === i.taskId && t.projectId === i.projectId)) err('タスクがプロジェクトに属していません');
@@ -135,10 +169,24 @@ export function addSession(d: LocalData, i: SessionInput, id: Id): LocalData {
     const t = (i.durationMinutes ?? '').trim();
     if (!/^[0-9]+$/.test(t) || Number(t) <= 0) err('所要時間は1以上の整数（分）で入力してください');
     ws.durationMinutes = Number(t);
+    const wd = (i.workDate ?? '').trim();
+    if (wd) {
+      if (!isWorkDate(wd)) err('作業日が正しくありません（YYYY-MM-DD）');
+      ws.workDate = wd;
+    }
   }
   const problems = workSessionProblems(ws);
   if (problems.length) err(`作業時間が不正です: ${problems.join(', ')}`);
-  return { ...d, workSessions: [...d.workSessions, ws] };
+  return ws;
+}
+export function addSession(d: LocalData, i: SessionInput, id: Id): LocalData {
+  return { ...d, workSessions: [...d.workSessions, buildSession(d, i, id)] };
+}
+/** Replaces the editable fields of a session; id and source stay. An undated record stays undated unless the user enters a date. */
+export function updateSession(d: LocalData, id: Id, i: SessionInput): LocalData {
+  if (!d.workSessions.some((w) => w.id === id)) err('作業時間が見つかりません');
+  const ws = buildSession(d, i, id);
+  return { ...d, workSessions: d.workSessions.map((w) => (w.id === id ? ws : w)) };
 }
 export function deleteSession(d: LocalData, id: Id): LocalData {
   return { ...d, workSessions: d.workSessions.filter((w) => w.id !== id) };
@@ -150,9 +198,40 @@ export function sessionMinutes(w: WorkSession): number {
   if (w.startedAt && w.endedAt) return Math.max(0, Math.round((Date.parse(w.endedAt) - Date.parse(w.startedAt)) / 60000));
   return 0;
 }
-export function hoursBy(d: LocalData, key: 'projectId' | 'agentId'): { id: Id; minutes: number }[] {
+export type Period = 'today' | 'week' | 'month' | 'all';
+export const PERIOD_LABEL: Record<Period, string> = { today: '今日', week: '今週', month: '今月', all: '全期間' };
+
+const pad = (n: number) => String(n).padStart(2, '0');
+/** Local calendar date (the browser's time zone) as YYYY-MM-DD. */
+export const localDateStr = (d: Date): string => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+
+/** Day a session belongs to: the entered workDate, else the local date of startedAt. Undefined for old undated records. */
+export function sessionDate(w: WorkSession): string | undefined {
+  return w.workDate ?? (w.startedAt ? localDateStr(new Date(w.startedAt)) : undefined);
+}
+/** Inclusive YYYY-MM-DD bounds. Weeks run Monday to Sunday. 'all' has no bounds. */
+export function periodBounds(p: Period, now: Date): { from?: string; to?: string } {
+  if (p === 'all') return {};
+  if (p === 'today') { const t = localDateStr(now); return { from: t, to: t }; }
+  if (p === 'week') {
+    const mondayOffset = (now.getDay() + 6) % 7;
+    const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - mondayOffset);
+    const to = new Date(from.getFullYear(), from.getMonth(), from.getDate() + 6);
+    return { from: localDateStr(from), to: localDateStr(to) };
+  }
+  return { from: localDateStr(new Date(now.getFullYear(), now.getMonth(), 1)), to: localDateStr(new Date(now.getFullYear(), now.getMonth() + 1, 0)) };
+}
+/** Undated records are only included in 'all' (no date is ever invented for them). */
+export function sessionsInPeriod(d: LocalData, p: Period, now: Date): WorkSession[] {
+  if (p === 'all') return d.workSessions;
+  const { from, to } = periodBounds(p, now);
+  return d.workSessions.filter((w) => { const s = sessionDate(w); return s !== undefined && s >= from! && s <= to!; });
+}
+export const undatedSessionCount = (d: LocalData): number => d.workSessions.filter((w) => sessionDate(w) === undefined).length;
+
+export function hoursBy(d: LocalData, key: 'projectId' | 'agentId', period: Period = 'all', now: Date = new Date()): { id: Id; minutes: number }[] {
   const m = new Map<Id, number>();
-  for (const w of d.workSessions) m.set(w[key], (m.get(w[key]) ?? 0) + sessionMinutes(w));
+  for (const w of sessionsInPeriod(d, period, now)) m.set(w[key], (m.get(w[key]) ?? 0) + sessionMinutes(w));
   return [...m].map(([id, minutes]) => ({ id, minutes })).sort((a, b) => b.minutes - a.minutes);
 }
 
@@ -186,4 +265,39 @@ export function recentActivity(snaps: GitHubSnapshot[], limit = 10): Activity[] 
 }
 export function lastSyncAt(snaps: GitHubSnapshot[]): string | undefined {
   return snaps.map((s) => s.fetchedAt).sort().at(-1);
+}
+
+// ---- GitHub link display (GitHub state and owner approval are separate facts)
+export type LinkState =
+  | { kind: 'unset' }
+  | { kind: 'no_snapshot'; number: number }
+  | { kind: 'not_in_latest'; number: number }
+  | { kind: 'found'; number: number; label: string; merged?: boolean; url: string };
+
+export function linkInfo(task: Task, snap?: GitHubSnapshot): { issue: LinkState; pr: LinkState } {
+  const issue = ((): LinkState => {
+    const n = task.links.issueNumber;
+    if (n === undefined) return { kind: 'unset' };
+    if (!snap) return { kind: 'no_snapshot', number: n };
+    const i = snap.issues.find((x) => x.number === n);
+    return i ? { kind: 'found', number: n, label: i.state === 'closed' ? 'クローズ' : 'オープン', url: i.url } : { kind: 'not_in_latest', number: n };
+  })();
+  const pr = ((): LinkState => {
+    const n = task.links.prNumber;
+    if (n === undefined) return { kind: 'unset' };
+    if (!snap) return { kind: 'no_snapshot', number: n };
+    const p = snap.pulls.find((x) => x.number === n);
+    return p ? { kind: 'found', number: n, label: p.merged ? 'マージ済み' : p.state === 'closed' ? 'クローズ（未マージ）' : 'オープン', merged: p.merged, url: p.url } : { kind: 'not_in_latest', number: n };
+  })();
+  return { issue, pr };
+}
+
+// ---- snapshot cache integrity
+export const repoKey = (r: { owner: string; name: string }): string => `${r.owner}/${r.name}`.toLowerCase();
+/** Cached snapshots that no longer belong to their project (project gone, repo unset or changed). */
+export function staleSnapshotIds(projects: Project[], snaps: Record<Id, GitHubSnapshot>): Id[] {
+  return Object.keys(snaps).filter((id) => {
+    const p = projects.find((x) => x.id === id);
+    return !p?.repo || repoKey(p.repo) !== snaps[id]!.repo.toLowerCase();
+  });
 }

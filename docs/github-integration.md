@@ -75,5 +75,8 @@ This confirms, for this one repository: the Netlify Function runs, unauthenticat
 
 **Still unverified:** paging (`Link` header / more than 30 items), abnormal-case behaviour in the real environment (rate-limit exhaustion, 404, upstream failure, real timeouts), ETag/304 (not implemented), behaviour with `GITHUB_TOKEN` set, and any repository other than the target.
 
+## 6d. Phase 1B owner acceptance (reported by the owner)
+Netlify deployment https://deft-halva-0ad17e.netlify.app/ at HEAD `81129eca200b27582d373cbfa4c89bae37491551`: 8/8 acceptance items passed, including a real GitHub API sync from the UI. Paging, real-environment error cases and ETag/304 remain unverified.
+
 ## 7. Open item to close before Phase 1 coding
 Run the 4 calls from an environment with unrestricted GitHub API access (owner's machine or a Netlify deploy preview) and record: counts, headers, `Link` behavior, anonymous limit, PR `merged_at` shape. Section 6c now records the owner's measurement for the target repository; the items listed there as unverified remain open.

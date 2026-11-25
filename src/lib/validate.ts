@@ -1,6 +1,6 @@
-import type { LocalData, Project, Agent, Task, WorkSession, GitHubSnapshot } from '../types';
+import { AGENT_KINDS, AGENT_ROLES, type LocalData, type Project, type Agent, type Task, type WorkSession, type GitHubSnapshot } from '../types';
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const isStr = (v: unknown): v is string => typeof v === 'string';
@@ -20,9 +20,18 @@ export function isProject(v: unknown): v is Project {
 export function isAgent(v: unknown): v is Agent {
   return (
     isObj(v) && isStr(v.id) && isStr(v.name) &&
-    ['claude-code-web', 'codex-cloud', 'human', 'other'].includes(v.kind as string) &&
-    ['developer', 'reviewer'].includes(v.role as string)
+    (AGENT_KINDS as readonly string[]).includes(v.kind as string) &&
+    Array.isArray(v.roles) && v.roles.length > 0 && new Set(v.roles).size === v.roles.length &&
+    v.roles.every((r) => (AGENT_ROLES as readonly string[]).includes(r as string))
   );
+}
+
+/** Strict YYYY-MM-DD that is a real calendar date. */
+export function isWorkDate(v: unknown): v is string {
+  if (typeof v !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const [y, m, d] = v.split('-').map(Number) as [number, number, number];
+  const t = new Date(Date.UTC(y, m - 1, d));
+  return t.getUTCFullYear() === y && t.getUTCMonth() === m - 1 && t.getUTCDate() === d;
 }
 
 export function isTask(v: unknown): v is Task {
@@ -47,6 +56,7 @@ export function workSessionProblems(v: unknown): string[] {
   if (v.source !== 'manual') p.push('source must be "manual"');
   if (!optDate(v.startedAt)) p.push('startedAt invalid');
   if (!optDate(v.endedAt)) p.push('endedAt invalid');
+  if (v.workDate !== undefined && !isWorkDate(v.workDate)) p.push('workDate must be a valid YYYY-MM-DD date');
   const d = v.durationMinutes;
   if (d !== undefined && (typeof d !== 'number' || !Number.isFinite(d) || d < 0)) p.push('durationMinutes must be >= 0');
   if (p.length) return p;
@@ -67,6 +77,7 @@ export function localDataProblems(v: unknown): string[] {
   if (!isObj(v)) return ['not an object'];
   const p: string[] = [];
   if (typeof v.schemaVersion !== 'number') p.push('schemaVersion missing');
+  if (typeof v.revision !== 'number' || !Number.isInteger(v.revision) || v.revision < 0) p.push('revision must be a non-negative integer');
   for (const [key, guard] of [['projects', isProject], ['agents', isAgent], ['tasks', isTask]] as const) {
     const arr = v[key];
     if (!Array.isArray(arr)) p.push(`${key} must be an array`);
@@ -97,4 +108,4 @@ export function isSnapshot(v: unknown): v is GitHubSnapshot {
   );
 }
 
-export const emptyLocalData = (): LocalData => ({ schemaVersion: SCHEMA_VERSION, projects: [], agents: [], tasks: [], workSessions: [] });
+export const emptyLocalData = (): LocalData => ({ schemaVersion: SCHEMA_VERSION, revision: 0, projects: [], agents: [], tasks: [], workSessions: [] });

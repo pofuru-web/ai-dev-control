@@ -46,14 +46,14 @@ test.describe('persistence and task flow', () => {
     await card().getByRole('button', { name: '承認する' }).click();
     await page.getByRole('dialog').getByRole('button', { name: '承認して完了にする' }).click();
     await expect(page.getByTestId('col-done').getByText('T1')).toBeVisible();
-    await expect(page.getByText('家主承認済み')).toBeVisible();
+    await expect(card().getByTestId('owner-approval')).toContainText('承認済み');
 
     await page.reload();
     await nav(page, 'タスク');
-    await expect(page.getByTestId('col-done').getByText('家主承認済み')).toBeVisible();
+    await expect(page.getByTestId('col-done').getByTestId('owner-approval')).toContainText('承認済み');
 
     await move('作業中'); // leaving done revokes the approval
-    await expect(page.getByText('家主承認済み')).toHaveCount(0);
+    await expect(card().getByTestId('owner-approval')).toContainText('未承認');
     await expect(page.getByTestId('col-in_progress').getByText('T1')).toBeVisible();
   });
 
@@ -190,8 +190,9 @@ test.describe('GitHub sync', () => {
     await dlg.getByLabel('Issue番号（手動紐付け）').fill('1');
     await dlg.getByLabel('PR番号（手動紐付け）').fill('2');
     await dlg.getByRole('button', { name: '保存' }).click();
-    await expect(page.getByText('PR #2（マージ済み）')).toBeVisible();
-    await expect(page.getByText('Issue #1（クローズ）')).toBeVisible();
+    const links = page.getByTestId('gh-links');
+    await expect(links).toContainText('Issue #1: クローズ');
+    await expect(links).toContainText('PR #2: マージ済み');
   });
 });
 

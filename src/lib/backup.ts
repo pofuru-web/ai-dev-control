@@ -1,15 +1,19 @@
 import type { LocalData } from '../types';
-import { SCHEMA_VERSION, localDataProblems } from './validate';
+import { SCHEMA_VERSION } from './validate';
+import { migrateLocalData } from './migrations';
 
 export interface BackupFile {
   app: 'ai-dev-control';
   exportedAt: string;
-  data: LocalData;
+  data: Omit<LocalData, 'revision'> & { revision?: number };
 }
 
 /** Backups contain only human-authored LocalData. GitHub snapshots are never exported. */
 export function exportBackup(data: LocalData, now: Date = new Date()): string {
-  const file: BackupFile = { app: 'ai-dev-control', exportedAt: now.toISOString(), data };
+  // `revision` is a per-browser save counter used for multi-tab conflict detection; it is not part of a backup.
+  const { revision: _revision, ...rest } = data;
+  void _revision;
+  const file = { app: 'ai-dev-control' as const, exportedAt: now.toISOString(), data: rest };
   return JSON.stringify(file, null, 2);
 }
 
@@ -26,7 +30,9 @@ export function parseBackup(text: string): ImportResult {
   if (typeof d?.schemaVersion === 'number' && d.schemaVersion > SCHEMA_VERSION) {
     return { ok: false, error: `backup schemaVersion ${d.schemaVersion} is newer than supported ${SCHEMA_VERSION}` };
   }
-  const problems = localDataProblems(d);
-  if (problems.length) return { ok: false, error: `validation failed: ${problems.slice(0, 5).join('; ')}` };
-  return { ok: true, data: d as LocalData };
+  // Current-format backups carry no revision; give them 0 so they validate. (The caller re-bases it on restore.)
+  const candidate = d && typeof d === 'object' && d.schemaVersion === SCHEMA_VERSION && (d as { revision?: unknown }).revision === undefined ? { ...d, revision: 0 } : d;
+  const m = migrateLocalData(candidate);
+  if (!m.ok) return { ok: false, error: `validation failed: ${m.error}` };
+  return { ok: true, data: m.data };
 }

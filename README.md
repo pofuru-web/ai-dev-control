@@ -25,7 +25,7 @@
 
 ## 開発・起動
 
-要件: Node.js 22 系で開発・検証しています（`engines` や `.nvmrc` は未設定）。
+要件: Node.js 22 系。リポジトリ直下の `.nvmrc`（`22`）で指定しています。
 
 ```bash
 npm install
@@ -56,6 +56,8 @@ npm run test:e2e    # Playwright（ビルドして preview を起動します）
 | Publish directory | `dist` |
 | Functions directory | `netlify/functions` |
 | Function 公開パス | `/api/github-snapshot` |
+
+**Node.js のバージョン**: Netlify はビルドの Node を `.nvmrc` → `.node-version` → `NODE_VERSION` 環境変数 → サイト設定の順で決め、Functions の実行環境は通常ビルドに追従します（Netlify 公式ドキュメント。`AWS_LAMBDA_JS_RUNTIME` を手動設定している場合を除く）。そのため `.nvmrc` がサイト設定より優先されます。Phase 1E で追加したため、**Netlify 上でのビルド・Function 動作は未検証**です（これまで家主が確認した環境は、この指定がない状態＝Netlify の既定の Node でした）。デプロイ後に動作確認してください。サイト設定に `NODE_VERSION` がある場合は 22 系と矛盾しないか確認してください。
 
 デプロイ手順（概要）: リポジトリを Netlify に接続し、対象ブランチをデプロイします。Netlify 上での動作は、Phase 1A〜1C の各コミットを家主が実環境で確認済みです（詳細は docs/test-plan.md。家主の報告であり、Claude Code が実行したものではありません）。
 

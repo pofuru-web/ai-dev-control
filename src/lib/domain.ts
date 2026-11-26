@@ -36,10 +36,32 @@ export function addProject(d: LocalData, i: ProjectInput, id: Id, now: string): 
   const p: Project = { id, ...c, createdAt: now, updatedAt: now };
   return { ...d, projects: [...d.projects, p] };
 }
+/**
+ * Effect of changing a project's GitHub repository on its tasks' manual Issue/PR numbers.
+ * A repository counts as changed only if it is a different repository (case-insensitive) and there was a previous
+ * repository. Setting a repository on a project that had none keeps existing numbers (no old repository to inherit from).
+ */
+export function repoChangeImpact(d: LocalData, id: Id, i: ProjectInput): { repoChanged: boolean; tasksWithLinks: number; approvedRevoked: number } {
+  const p = d.projects.find((x) => x.id === id);
+  const next = parseRepoInput(i.repoText ?? '');
+  const changed = !!p?.repo && (!next || repoKey(next) !== repoKey(p.repo));
+  if (!changed) return { repoChanged: false, tasksWithLinks: 0, approvedRevoked: 0 };
+  const linked = d.tasks.filter((t) => t.projectId === id && (t.links.issueNumber !== undefined || t.links.prNumber !== undefined));
+  return { repoChanged: true, tasksWithLinks: linked.length, approvedRevoked: linked.filter((t) => t.ownerApproved).length };
+}
+
 export function updateProject(d: LocalData, id: Id, i: ProjectInput, now: string): LocalData {
   const c = cleanProject(i);
   if (!d.projects.some((p) => p.id === id)) err('プロジェクトが見つかりません');
-  return { ...d, projects: d.projects.map((p) => (p.id === id ? { ...p, ...c, updatedAt: now } : p)) };
+  const impact = repoChangeImpact(d, id, i);
+  const tasks = !impact.repoChanged ? d.tasks : d.tasks.map((t) => {
+    if (t.projectId !== id || (t.links.issueNumber === undefined && t.links.prNumber === undefined)) return t;
+    // Old repository numbers are not carried over. Links are part of what the owner approved, so approval is revoked.
+    const next: Task = { ...t, links: {}, updatedAt: now };
+    if (t.ownerApproved) { next.status = 'awaiting_owner'; next.ownerApproved = false; next.approvedAt = undefined; }
+    return next;
+  });
+  return { ...d, projects: d.projects.map((p) => (p.id === id ? { ...p, ...c, updatedAt: now } : p)), tasks };
 }
 export function projectDeletionImpact(d: LocalData, id: Id) {
   return { tasks: d.tasks.filter((t) => t.projectId === id).length, sessions: d.workSessions.filter((w) => w.projectId === id).length };
@@ -113,6 +135,10 @@ export function isSubstantiveEdit(t: Task, c: ReturnType<typeof cleanTask>): boo
   return t.title !== c.title || (t.notes ?? '') !== (c.notes ?? '') || t.projectId !== c.projectId ||
     t.links.issueNumber !== c.links.issueNumber || t.links.prNumber !== c.links.prNumber;
 }
+export const TASK_MOVE_BLOCKED = 'このタスクには作業時間が記録されているため、別のプロジェクトへ移動できません（作業時間は自動では移動・削除されません）';
+/** Number of work sessions linked to a task (the project of such a task cannot be changed). */
+export const taskSessionCount = (d: LocalData, id: Id): number => d.workSessions.filter((w) => w.taskId === id).length;
+
 /** True when saving this edit would revoke an existing owner approval (used to warn before saving). */
 export function editRevokesApproval(d: LocalData, id: Id, i: TaskInput): boolean {
   const t = d.tasks.find((x) => x.id === id);
@@ -124,6 +150,7 @@ export function updateTask(d: LocalData, id: Id, i: TaskInput, now: string): Loc
   const c = cleanTask(d, i);
   const t = d.tasks.find((x) => x.id === id);
   if (!t) return err('タスクが見つかりません');
+  if (t.projectId !== c.projectId && d.workSessions.some((w) => w.taskId === id)) err(TASK_MOVE_BLOCKED);
   const revoke = t.ownerApproved && isSubstantiveEdit(t, c);
   const next: Task = { ...t, ...c, updatedAt: now };
   if (revoke) { next.status = 'awaiting_owner'; next.ownerApproved = false; next.approvedAt = undefined; }

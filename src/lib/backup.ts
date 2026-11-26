@@ -1,5 +1,5 @@
 import type { LocalData } from '../types';
-import { SCHEMA_VERSION } from './validate';
+import { SCHEMA_VERSION, referenceProblems } from './validate';
 import { migrateLocalData } from './migrations';
 
 export interface BackupFile {
@@ -34,5 +34,7 @@ export function parseBackup(text: string): ImportResult {
   const candidate = d && typeof d === 'object' && d.schemaVersion === SCHEMA_VERSION && (d as { revision?: unknown }).revision === undefined ? { ...d, revision: 0 } : d;
   const m = migrateLocalData(candidate);
   if (!m.ok) return { ok: false, error: `validation failed: ${m.error}` };
+  const refs = referenceProblems(m.data);
+  if (refs.length) return { ok: false, error: `integrity check failed (${refs.length}): ${refs.slice(0, 3).join('; ')}${refs.length > 3 ? ' ...' : ''}` };
   return { ok: true, data: m.data };
 }

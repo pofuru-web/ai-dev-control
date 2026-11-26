@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '../state/AppState';
-import { addProject, projectDeletionImpact, deleteProject, updateProject, type ProjectInput } from '../lib/domain';
+import { addProject, projectDeletionImpact, deleteProject, repoChangeImpact, updateProject, type ProjectInput } from '../lib/domain';
 import { fmtDateTime } from '../lib/format';
 import type { Project } from '../types';
 import { Badge, Btn, Card, Confirm, Empty, Field, Modal, inputCls } from '../ui/kit';
@@ -14,10 +14,16 @@ function ProjectForm({ initial, onClose }: { initial?: Project; onClose: () => v
     repoText: initial?.repo ? `${initial.repo.owner}/${initial.repo.name}` : '',
   });
   const [error, setError] = useState('');
-  const submit = () => {
+  const [confirm, setConfirm] = useState<{ tasksWithLinks: number; approvedRevoked: number } | null>(null);
+  const save = () => {
     const now = app.now();
     const r = app.run((d) => (initial ? updateProject(d, initial.id, v, now) : addProject(d, v, app.newId(), now)));
-    if (r.ok) onClose(); else setError(r.error);
+    if (r.ok) onClose(); else { setError(r.error); setConfirm(null); }
+  };
+  const submit = () => {
+    let impact: ReturnType<typeof repoChangeImpact> | undefined;
+    try { impact = initial ? repoChangeImpact(app.data, initial.id, v) : undefined; } catch { impact = undefined; /* input errors surface from save() */ }
+    if (impact?.repoChanged && impact.tasksWithLinks > 0) setConfirm(impact); else save();
   };
   return (
     <Modal title={initial ? 'プロジェクトを編集' : 'プロジェクトを登録'} onClose={onClose}>
@@ -35,6 +41,16 @@ function ProjectForm({ initial, onClose }: { initial?: Project; onClose: () => v
         {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
         <div className="flex justify-end gap-2"><Btn onClick={onClose}>キャンセル</Btn><Btn tone="primary" onClick={submit}>保存</Btn></div>
       </div>
+      {confirm && (
+        <Confirm title="リポジトリを変更しますか？" confirmLabel="Issue/PRの紐付けを解除して変更" onCancel={() => setConfirm(null)}
+          body={<>
+            <p data-testid="repo-change-impact">影響するタスク: <strong>{confirm.tasksWithLinks} 件</strong>（Issue/PR番号を手入力で紐付けているもの）</p>
+            <p>リポジトリを変更すると、これらのタスクの Issue/PR の紐付けが<strong>すべて解除</strong>されます（旧リポジトリの番号は引き継ぎません）。同期済みの旧リポジトリのGitHubデータも破棄されます。</p>
+            {confirm.approvedRevoked > 0 && <p className="text-amber-300">うち家主承認済みの {confirm.approvedRevoked} 件は、紐付けが変わるため承認が取り消され、「承認待ち」に戻ります（再承認が必要）。</p>}
+            <p className="text-xs text-slate-400">キャンセルすると何も変更されません。大文字・小文字だけの違いは同じリポジトリとして扱い、解除しません。</p>
+          </>}
+          onConfirm={save} />
+      )}
     </Modal>
   );
 }

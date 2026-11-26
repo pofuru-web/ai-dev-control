@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '../state/AppState';
-import { STATUS_LABEL, STATUS_ORDER, addTask, approveTask, deleteTask, editRevokesApproval, linkInfo, moveTask, updateTask, type LinkState, type TaskInput } from '../lib/domain';
+import { STATUS_LABEL, STATUS_ORDER, addTask, approveTask, deleteTask, editRevokesApproval, linkInfo, moveTask, taskSessionCount, updateTask, type LinkState, type TaskInput } from '../lib/domain';
 import { fmtDateTime, safeGithubUrl } from '../lib/format';
 import type { Task, TaskStatus } from '../types';
 import { Badge, Banner, Btn, Confirm, Empty, Field, Modal, inputCls } from '../ui/kit';
@@ -15,6 +15,7 @@ function TaskForm({ initial, defaultProject, onClose }: { initial?: Task; defaul
   });
   const [error, setError] = useState('');
   const [confirmRevoke, setConfirmRevoke] = useState(false);
+  const sessionCount = initial ? taskSessionCount(app.data, initial.id) : 0;
   const save = () => {
     const now = app.now();
     const r = app.run((d) => (initial ? updateTask(d, initial.id, v, now) : addTask(d, v, app.newId(), now)));
@@ -34,10 +35,11 @@ function TaskForm({ initial, defaultProject, onClose }: { initial?: Task; defaul
           </Banner>
         )}
         <Field label="プロジェクト">
-          <select className={inputCls} value={v.projectId} onChange={(e) => setV({ ...v, projectId: e.target.value })}>
+          <select className={inputCls} value={v.projectId} disabled={sessionCount > 0} onChange={(e) => setV({ ...v, projectId: e.target.value })}>
             <option value="">選択してください</option>
             {app.data.projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
           </select>
+          {sessionCount > 0 && <span data-testid="move-blocked" className="mt-1 block text-xs text-amber-300">作業時間が {sessionCount} 件記録されているため、別のプロジェクトへは移動できません（作業時間は自動では移動・削除されません）。</span>}
         </Field>
         <Field label="タスク名"><input className={inputCls} value={v.title} onChange={(e) => setV({ ...v, title: e.target.value })} /></Field>
         <Field label="メモ（任意）"><textarea className={inputCls} rows={2} value={v.notes} onChange={(e) => setV({ ...v, notes: e.target.value })} /></Field>

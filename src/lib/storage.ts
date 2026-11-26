@@ -12,6 +12,8 @@ export const LOCAL_KEY = 'adc:local:v1';
 export const LOCAL_PREV_KEY = 'adc:local:v1:prev';
 /** Raw copy of data from an older schema, written once before the first save that would replace it. Never deleted by the app. */
 export const premigrationKey = (fromVersion: number, index = 0) => `adc:premigration:v${fromVersion}${index ? `:${index}` : ''}`;
+/** Raw copy of a stored value that could not be loaded (corrupt), kept before it is replaced. Never deleted by the app. */
+export const corruptCopyKey = (index = 0) => `adc:corrupt-copy:${index}`;
 export const snapshotKey = (projectId: string) => `adc:snapshot:v1:${projectId}`;
 
 export type LoadResult =
@@ -27,16 +29,20 @@ export type LoadResult =
  *  - 'removed_new': read-back failed on a first-ever save; the unverifiable new value was removed.
  *  - 'restore_failed': could not restore/verify. Previous data may still be in LOCAL_PREV_KEY, and
  *    loadLocal() falls back to it if main is unreadable. The UI must tell the user to export a backup.
+ *  - 'skipped_newer_value': at recovery time the stored value was a valid value that is neither ours nor the previous
+ *    one, i.e. another tab saved in between. Nothing was written (the other tab's data is left alone).
+ *  - 'skipped_unreadable': the stored value could not be read at recovery time, so no blind write-back was made.
  */
-export type SaveRecovery = 'restored_previous' | 'removed_new' | 'restore_failed';
+export type SaveRecovery = 'restored_previous' | 'removed_new' | 'restore_failed' | 'skipped_newer_value' | 'skipped_unreadable';
 /**
  * kind (only for refusals made BEFORE any write was attempted; nothing was changed):
  *  - 'read_failed': the existing data could not be read, so overwriting it blindly was refused.
  *  - 'newer_schema': stored data was written by a newer app version; this version never overwrites it.
  *  - 'conflict': the stored revision differs from the revision this tab loaded (another tab saved in between).
  *  - 'migration_backup_failed': the raw pre-migration copy could not be written, so the old data was not replaced.
+ *  - 'corrupt_backup_failed': the stored value is unreadable/corrupt and a raw copy of it could not be kept, so it was not replaced.
  */
-export type SaveRefusal = 'read_failed' | 'newer_schema' | 'conflict' | 'migration_backup_failed';
+export type SaveRefusal = 'read_failed' | 'newer_schema' | 'conflict' | 'migration_backup_failed' | 'corrupt_backup_failed';
 export type SaveResult = { ok: true; revision: number } | { ok: false; error: string; recovery?: SaveRecovery; kind?: SaveRefusal };
 
 const versionOf = (raw: string | null): number | undefined => {
@@ -138,24 +144,37 @@ export function saveLocal(kv: KV, data: LocalData): SaveResult {
   if (found !== undefined && found !== data.revision) {
     return { ok: false, kind: 'conflict', error: `stored revision ${found} differs from this tab's revision ${data.revision}; another tab or window saved newer data` };
   }
-  // Old-schema data is about to be replaced: keep a raw copy first. If that fails, do not replace it.
+  // A raw copy of the value being replaced is kept first when it cannot be loaded as-is. If the copy fails, do not replace it.
   const curVer = versionOf(current);
-  if (current !== null && curVer !== undefined && curVer < SCHEMA_VERSION) {
+  const older = current !== null && curVer !== undefined && curVer < SCHEMA_VERSION;
+  const unloadable = current !== null && !older && found === undefined; // corrupt / invalid / unreadable JSON
+  if (current !== null && (older || unloadable)) {
+    const keyFor = older ? (i: number) => premigrationKey(curVer!, i) : corruptCopyKey;
     try {
       let i = 0;
       for (; i < 5; i++) {
-        const existing = kv.getItem(premigrationKey(curVer, i));
+        const existing = kv.getItem(keyFor(i));
         if (existing === current) break;
-        if (existing === null) { kv.setItem(premigrationKey(curVer, i), current); break; }
+        if (existing === null) { kv.setItem(keyFor(i), current); break; }
       }
-      if (i >= 5) throw new Error('too many pre-migration copies');
+      if (i >= 5) throw new Error('too many raw copies');
     } catch (e) {
-      return { ok: false, kind: 'migration_backup_failed', error: `could not keep a copy of the old data; it was not replaced: ${String(e)}` };
+      return older
+        ? { ok: false, kind: 'migration_backup_failed', error: `could not keep a copy of the old data; it was not replaced: ${String(e)}` }
+        : { ok: false, kind: 'corrupt_backup_failed', error: `could not keep a copy of the unreadable data; it was not replaced: ${String(e)}` };
     }
   }
-  // Best-effort: keep last good generation. Only copy if it is itself valid.
-  if (current !== null && isLocalData(parse(current))) {
+  // Best-effort: keep last good generation. Only copy if it is itself valid and differs from what is there.
+  if (current !== null && current !== prevRaw && isLocalData(parse(current))) {
     try { kv.setItem(LOCAL_PREV_KEY, current); } catch { /* ignore: main write decides success */ }
+  }
+  // Re-check immediately before the main write (narrows, but does not close, the window in which another tab can save).
+  try {
+    if (kv.getItem(LOCAL_KEY) !== current) {
+      return { ok: false, kind: 'conflict', error: 'the stored data changed while this save was being prepared (another tab or window saved); nothing was written to the main data' };
+    }
+  } catch (e) {
+    return { ok: false, kind: 'read_failed', error: `existing data could not be re-read; main data was not written: ${String(e)}` };
   }
   try {
     kv.setItem(LOCAL_KEY, raw);
@@ -168,16 +187,25 @@ export function saveLocal(kv: KV, data: LocalData): SaveResult {
     if (kv.getItem(LOCAL_KEY) !== raw) readBackProblem = 'read-back mismatch';
   } catch (e) { readBackProblem = `read-back failed: ${String(e)}`; }
   if (readBackProblem === undefined) return { ok: true, revision: nextRevision };
-  return { ok: false, error: readBackProblem, recovery: restoreAfterBadWrite(kv, current) };
+  return { ok: false, error: readBackProblem, recovery: restoreAfterBadWrite(kv, current, raw) };
 }
 
-/** Puts the pre-save main value back (or removes the new one if there was none) and verifies it. */
-function restoreAfterBadWrite(kv: KV, previousRaw: string | null): SaveRecovery {
+/**
+ * Called only after our own write was judged bad. It re-reads the stored value first and never overwrites a valid value
+ * that is not ours (another tab's save), and never writes blindly when the value cannot be read. Like the rest of this
+ * module it is check-then-write, not atomic: a save landing between this check and the write-back is still possible.
+ */
+function restoreAfterBadWrite(kv: KV, previousRaw: string | null, ourRaw: string): SaveRecovery {
+  let now: string | null;
+  try { now = kv.getItem(LOCAL_KEY); } catch { return 'skipped_unreadable'; }
+  if (now !== null && now !== ourRaw && now !== previousRaw && storedRevision(now) !== undefined) return 'skipped_newer_value';
   try {
     if (previousRaw === null) {
+      if (now === null) return 'removed_new';
       kv.removeItem(LOCAL_KEY);
       return kv.getItem(LOCAL_KEY) === null ? 'removed_new' : 'restore_failed';
     }
+    if (now === previousRaw) return 'restored_previous';
     kv.setItem(LOCAL_KEY, previousRaw);
     return kv.getItem(LOCAL_KEY) === previousRaw ? 'restored_previous' : 'restore_failed';
   } catch { return 'restore_failed'; }

@@ -88,6 +88,39 @@ export function localDataProblems(v: unknown): string[] {
   return p;
 }
 
+/**
+ * Referential integrity and ID uniqueness (separate from structural validation on purpose).
+ * Optional references (task.assigneeAgentId, session.taskId) may be unset. Used to REJECT bad backups on restore,
+ * and only to WARN for data already stored (stored data is never deleted or rewritten because of it).
+ */
+export function referenceProblems(d: LocalData): string[] {
+  const p: string[] = [];
+  const dupes = (label: string, ids: string[]) => {
+    const seen = new Set<string>();
+    for (const id of ids) { if (seen.has(id)) p.push(`${label}: duplicate id "${id}"`); seen.add(id); }
+  };
+  dupes('projects', d.projects.map((x) => x.id));
+  dupes('agents', d.agents.map((x) => x.id));
+  dupes('tasks', d.tasks.map((x) => x.id));
+  dupes('workSessions', d.workSessions.map((x) => x.id));
+  const projects = new Set(d.projects.map((x) => x.id));
+  const agents = new Set(d.agents.map((x) => x.id));
+  const taskProject = new Map(d.tasks.map((t) => [t.id, t.projectId] as const));
+  d.tasks.forEach((t, i) => {
+    if (!projects.has(t.projectId)) p.push(`tasks[${i}] ("${t.id}"): unknown projectId "${t.projectId}"`);
+    if (t.assigneeAgentId !== undefined && !agents.has(t.assigneeAgentId)) p.push(`tasks[${i}] ("${t.id}"): unknown assigneeAgentId "${t.assigneeAgentId}"`);
+  });
+  d.workSessions.forEach((w, i) => {
+    if (!projects.has(w.projectId)) p.push(`workSessions[${i}] ("${w.id}"): unknown projectId "${w.projectId}"`);
+    if (!agents.has(w.agentId)) p.push(`workSessions[${i}] ("${w.id}"): unknown agentId "${w.agentId}"`);
+    if (w.taskId !== undefined) {
+      if (!taskProject.has(w.taskId)) p.push(`workSessions[${i}] ("${w.id}"): unknown taskId "${w.taskId}"`);
+      else if (taskProject.get(w.taskId) !== w.projectId) p.push(`workSessions[${i}] ("${w.id}"): its task belongs to another project than the session`);
+    }
+  });
+  return p;
+}
+
 export function isLocalData(v: unknown): v is LocalData {
   return localDataProblems(v).length === 0;
 }

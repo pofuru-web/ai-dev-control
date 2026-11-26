@@ -110,6 +110,13 @@ Authoritative types: `src/types/index.ts`. `SCHEMA_VERSION = 2`.
 ### Approval
 Editing the title, notes, project or Issue/PR links of an approved task revokes approval and returns it to `awaiting_owner`; the form warns first and asks for confirmation. Assignee-only edits keep the approval. GitHub merged state and owner approval are displayed and stored separately.
 
+## Phase 1E changes (no schema change)
+- **Reference integrity** (`referenceProblems` in `src/lib/validate.ts`): ids unique per entity; `task.projectId`, `task.assigneeAgentId` (optional), `session.projectId`, `session.agentId`, `session.taskId` (optional) must exist; a session's task must belong to the session's project. Unset optional references are accepted. A backup that fails is **rejected before restore** (stored data untouched). Stored data that fails is **only warned about** (banner + list on the data page); it is never deleted or rewritten automatically, and saving is not blocked.
+- **Task project move**: a task with linked work sessions cannot change project (domain rejects; UI disables the field and shows why). Sessions are never moved or deleted automatically.
+- **Repository change**: changing a project's repository to a different one (case-insensitive compare) clears Issue/PR links of that project's tasks (UI shows the count and asks for confirmation); approved tasks whose links were cleared lose their approval (back to `awaiting_owner`). Setting a repository on a project that had none keeps existing numbers. The existing snapshot-cache invalidation is unchanged.
+- **Recovery after a bad write** (`storage.ts`): before writing back, the stored value is re-read. A valid value that is not ours (another tab saved) is never overwritten (`skipped_newer_value`); an unreadable value is never overwritten blindly (`skipped_unreadable`); a first-save value is not removed if it is another tab's. A re-check right before the main write (after the prev copy) narrows the window further and the prev copy is skipped when unchanged. **None of this is atomic: it remains check-then-write, so a save landing between the check and the write is still possible. Exclusion is not guaranteed.**
+- **Corrupt value protection**: before a corrupt/unloadable main value is replaced (start fresh, restore, or any save), a raw copy is written to `adc:corrupt-copy:<n>` (never overwritten, never deleted by the app). If the copy cannot be written the value is not replaced (`corrupt_backup_failed`). There is no screen to download these copies yet (a known limitation).
+
 ### Adopted v0.1 policies (decided by the owner after Phase 1C)
 1. An assignee-only change does not revoke an approval.
 2. The legacy agent kind `human` is kept for compatibility.

@@ -53,6 +53,11 @@ function Notices({ go }: { go: (p: PageId) => void }) {
           <p>変換はまだ保存されていません。最初に保存するとき、変換前の元データを別の場所に控えてから保存します。</p>
         </Banner>
       )}
+      {app.loadInfo.integrityProblems && (
+        <Banner tone="warn" title={`保存データに整合性の問題があります（${app.loadInfo.integrityProblems.length}件）`} actions={toData}>
+          <p>存在しないプロジェクト・担当者・タスクへの参照、または重複した ID が見つかりました。データは変更・削除していません。画面に「?」と表示される項目があるかもしれません。まず「データ管理」からバックアップをダウンロードして保管してください。</p>
+        </Banner>
+      )}
       {app.loadInfo.recoveredFromPrev && (
         <Banner tone="warn" title="直前の世代のデータから復旧しました">
           <p>最新の保存データが読めなかったため、ひとつ前の保存内容を表示しています。直近の変更が含まれていない可能性があります。</p>

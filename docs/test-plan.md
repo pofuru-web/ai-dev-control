@@ -53,5 +53,23 @@ All unit/integration green, E2E green, typecheck + lint clean, security checks p
 - Result: all 7 items passed — (1) old data carried over without loss, (2) agent editing and multiple roles, (3) work-time editing and period totals, (4) GitHub re-sync, (5) editing an approved task's content returns it to awaiting approval, (6) JSON backup export, (7) a stale tab's save is refused when another tab holds newer data.
 - Scope note: this does **not** include verification of exclusion for saves made at exactly the same instant from two tabs. That case is not guaranteed (see data-model.md, multi-tab limit) and remains unverified.
 
+## Phase 1E additions
+- Unit (`tests/unit/phase1e.test.ts`, 53 tests): reference/uniqueness checks (10 invalid cases, each also rejected by `parseBackup`, v1 backups, rejection leaves storage byte-identical, stored problems only warned, domain ops never create problems); recovery never overwrites another tab's valid save (also for first save; unreadable value; prev-write race aborts before the main write; own corrupted write still restored); corrupt-value raw copy (next slot, never over an existing copy, no overwrite if the copy fails); task project move blocked with sessions; repository change impact (links cleared, approval revoked, case-only / URL form unchanged, removal, first-time set, other projects untouched).
+- E2E (`tests/e2e/release-fixes.spec.ts`, 19 tests): 6 invalid backups rejected with data unchanged, valid backup with unset optional refs restored, stored-data warning and list without modification, task move block (UI + saved data) and normal move, repo change dialog (count, cancel byte-identical, confirm clears links / revokes approval / drops cache), case-only change and no-link project need no dialog, agent/session delete confirmations (cancel / confirm / blocked), corrupt start-fresh copy and refusal when the copy cannot be written.
+- Mutation check (manual, this phase): disabling each of the M-1, M-2, M-3, M-5 fixes makes the corresponding tests fail.
+- Existing tests: none edited or removed (Vitest 166 and Playwright 29 unchanged and passing).
+- Not covered: the read-back race between two real browser tabs (only simulated with an in-memory store), Netlify deployment of Phase 1E, `.nvmrc` effect on Netlify, Chromium only.
+
+## Phase 1E 実環境受入手順（家主向け・Netlify プレビュー）
+1. Phase 1E ブランチをデプロイし、**ビルドが成功する**こと（`.nvmrc` の Node 22）と画面が開くことを確認。
+2. 先に「データ管理」で現在のデータのバックアップをダウンロード。
+3. 既存データが消えずに表示される。「整合性の問題」の警告が出た場合は内容を確認（出ない場合は正常）。
+4. GitHub 同期が成功する（Node 22 での Function 動作の確認）。
+5. 作業時間のあるタスクの編集画面で、プロジェクトが変更できず理由が出る。作業時間のないタスクは移動できる。
+6. 紐付けのあるタスクを持つプロジェクトでリポジトリを変更→確認画面に件数が出る→キャンセルで変化なし→確定で紐付けが外れ、承認済みタスクは「承認待ち」に戻る。大文字小文字だけの変更では確認が出ない。
+7. 担当者・作業時間の削除で確認画面が出る（キャンセルで残る）。
+8. 不正なバックアップ（ID を重複させた JSON など）を復元しようとすると拒否され、データが変わらない。
+9. （任意・要注意）破損データの動作は、必ず事前バックアップを取った上でテスト用ブラウザで確認。
+
 ## Phase 1D regression baseline
 Vitest 166 and Playwright 29 (Phase 1C) are the baseline; none may be deleted, skipped or loosened. Results of the Phase 1D run are in `docs/release-checklist.md`.

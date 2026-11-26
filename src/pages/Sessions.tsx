@@ -3,7 +3,7 @@ import { useApp } from '../state/AppState';
 import { PERIOD_LABEL, addSession, deleteSession, hoursBy, localDateStr, sessionDate, sessionMinutes, undatedSessionCount, updateSession, type Period, type SessionInput } from '../lib/domain';
 import { fmtDateTime, fmtMinutes } from '../lib/format';
 import type { WorkSession } from '../types';
-import { Btn, Card, Empty, Field, Modal, inputCls } from '../ui/kit';
+import { Btn, Card, Confirm, Empty, Field, Modal, inputCls } from '../ui/kit';
 
 const toLocalInput = (iso?: string) => {
   if (!iso) return '';
@@ -40,6 +40,7 @@ export default function Sessions() {
   const [err, setErr] = useState('');
   const [period, setPeriod] = useState<Period>('all');
   const [editing, setEditing] = useState<WorkSession | null>(null);
+  const [deleting, setDeleting] = useState<WorkSession | null>(null);
   const [ev, setEv] = useState<SessionInput | null>(null);
   const [eerr, setEerr] = useState('');
   const pName = (id: string) => data.projects.find((p) => p.id === id)?.name ?? '?';
@@ -90,13 +91,18 @@ export default function Sessions() {
                 <span>{pName(w.projectId)} · {aName(w.agentId)} · {fmtMinutes(sessionMinutes(w))}{w.startedAt ? `（${fmtDateTime(w.startedAt)} 〜 ${fmtDateTime(w.endedAt)}）` : `（${sessionDate(w) ?? '日付なし'}）`}{w.note ? ` — ${w.note}` : ''}</span>
                 <span className="flex gap-2">
                   <Btn disabled={ro} onClick={() => startEdit(w)}>編集</Btn>
-                  <Btn tone="danger" disabled={ro} onClick={() => { const r = app.run((d) => deleteSession(d, w.id)); setErr(r.ok ? '' : r.error); }}>削除</Btn>
+                  <Btn tone="danger" disabled={ro} onClick={() => setDeleting(w)}>削除</Btn>
                 </span>
               </li>
             ))}
           </ul>
         )}
       </Card>
+      {deleting && (
+        <Confirm title="作業時間の記録を削除しますか？" confirmLabel="削除する" onCancel={() => setDeleting(null)}
+          body={<><p>{pName(deleting.projectId)} · {aName(deleting.agentId)} · {fmtMinutes(sessionMinutes(deleting))} の記録を削除します。</p><p>この操作は元に戻せません。</p></>}
+          onConfirm={() => { const r = app.run((d) => deleteSession(d, deleting.id)); setErr(r.ok ? '' : r.error); setDeleting(null); }} />
+      )}
       {editing && ev && (
         <Modal title="作業時間を編集" onClose={() => setEditing(null)}>
           <SessionFields v={ev} setV={setEv} tasks={tasksOf(ev.projectId)} projects={data.projects} agents={data.agents} />

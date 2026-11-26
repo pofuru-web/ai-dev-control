@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { GitHubSnapshot, Id, LocalData, SnapshotError } from '../types';
 import { LOCAL_KEY, loadLocal, loadSnapshot, saveLocal, snapshotKey, type KV, type SaveResult } from '../lib/storage';
-import { emptyLocalData, isLocalData, isSnapshot } from '../lib/validate';
+import { emptyLocalData, isLocalData, isSnapshot, referenceProblems } from '../lib/validate';
 import { refreshSnapshot } from '../lib/github/client';
 import { parseBackup, exportBackup } from '../lib/backup';
 import * as D from '../lib/domain';
@@ -38,9 +38,12 @@ export function describeSaveFailure(r: Extract<SaveResult, { ok: false }>): Save
   if (r.kind === 'newer_schema') return { message: '保存先のデータは新しいバージョンで作成されているため、上書きを拒否しました。', refusal: 'newer_schema' };
   if (r.kind === 'read_failed') return { message: '既存データを読み取れなかったため、データ保護のため保存を中止しました。変更は反映されていません。', refusal: 'read_failed' };
   if (r.kind === 'conflict') return { message: '他のタブまたはウィンドウでデータが更新されていたため、上書きを防ぐ目的で保存を中止しました。この変更は保存されていません。', refusal: 'conflict' };
+  if (r.kind === 'corrupt_backup_failed') return { message: '破損している元データの控えを保存できなかったため、元データを上書きせず中止しました。変更は反映されていません。先に「データ管理」から保存データ（生）をダウンロードしてください。', refusal: 'corrupt_backup_failed' };
   if (r.kind === 'migration_backup_failed') return { message: '旧形式のデータの控えを保存できなかったため、データ保護のため保存を中止しました。変更は反映されていません。', refusal: 'migration_backup_failed' };
   const rec = r.recovery === 'restored_previous' ? '直前のデータを書き戻して検証済みです。'
     : r.recovery === 'removed_new' ? '検証できなかった新しいデータは削除しました。'
+    : r.recovery === 'skipped_newer_value' ? '他のタブが新しいデータを保存していたため、そのデータを上書きしないよう書き戻しは行いませんでした。「最新のデータを読み込む」で再読み込みしてください。'
+    : r.recovery === 'skipped_unreadable' ? '保存先を読み取れないため、書き戻しは行いませんでした。画面のデータは失われていません。「データ管理」からバックアップをダウンロードしてから再読み込みしてください。'
     : r.recovery === 'restore_failed' ? '直前のデータへの復旧にも失敗しました。画面のデータは失われていません。すぐに「データ管理」からバックアップをダウンロードしてください。'
     : '直前のデータは保持されています。';
   return { message: `保存に失敗しました（${r.error}）。`, recovery: rec };
@@ -57,7 +60,8 @@ function init() {
     const s = loadSnapshot(kv, p.id);
     if (s && matchesProject(loaded.data, p.id, s)) snaps[p.id] = s; // a cache for another repository is never shown
   }
-  return { kv, persistent, loaded, mode, snaps };
+  const integrity = loaded.status === 'ok' ? referenceProblems(loaded.data) : [];
+  return { kv, persistent, loaded, mode, snaps, integrity };
 }
 
 export interface LoadInfo {
@@ -66,6 +70,8 @@ export interface LoadInfo {
   migrationFailed?: { fromVersion: number; error: string };
   foundVersion?: number;
   problems?: string[];
+  /** Stored data loaded fine structurally but has dangling references / duplicate ids. Never auto-fixed. */
+  integrityProblems?: string[];
 }
 
 export interface AppApi {
@@ -135,7 +141,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const r = saveLocal(kv, next);
     if (!r.ok) {
       const p = describeSaveFailure(r);
-      if (r.kind === 'conflict') { goStale('保存しようとしたところ、他のタブまたはウィンドウで新しいデータが保存されていました。'); }
+      if (r.kind === 'conflict' || r.recovery === 'skipped_newer_value') { goStale('保存しようとしたところ、他のタブまたはウィンドウで新しいデータが保存されていました。'); }
+      if (r.recovery === 'skipped_unreadable') { goStale('保存先を確認できなくなったため、このタブでの編集を止めました。'); }
       setSaveProblem(p);
       return { ok: false, error: `${p.message}${p.recovery ?? ''}` };
     }
@@ -216,6 +223,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       migrationFailed: boot.loaded.status === 'migration_failed' ? { fromVersion: boot.loaded.fromVersion, error: boot.loaded.error } : undefined,
       foundVersion: boot.loaded.status === 'readonly_newer_schema' ? boot.loaded.foundVersion : undefined,
       problems: boot.loaded.status === 'corrupt' ? boot.loaded.problems : undefined,
+      integrityProblems: boot.integrity.length ? boot.integrity : undefined,
     },
     saveProblem, dismissSaveProblem: () => setSaveProblem(null),
     snapshots: shown, sync, syncProject, run,

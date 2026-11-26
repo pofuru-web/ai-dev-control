@@ -46,6 +46,15 @@ export default function DataView() {
         <p className="mt-1 text-sm text-slate-400">現在: {counts(app.data)}</p>
         <p className="mt-1 text-xs text-slate-500">バックアップにはGitHubから取得したデータは含まれません（再同期で取得できます）。</p>
       </Card>
+      {app.loadInfo.integrityProblems && (
+        <Card title="整合性の問題（保存データ）">
+          <ul data-testid="integrity-list" className="list-disc space-y-1 pl-5 text-xs text-amber-200">
+            {app.loadInfo.integrityProblems.slice(0, 10).map((m, i) => <li key={i}>{m}</li>)}
+          </ul>
+          {app.loadInfo.integrityProblems.length > 10 && <p className="mt-1 text-xs text-slate-400">ほか {app.loadInfo.integrityProblems.length - 10} 件</p>}
+          <p className="mt-2 text-xs text-slate-400">自動では修正しません。「JSONをダウンロード」で保管してから、問題のある項目を手動で整理してください。</p>
+        </Card>
+      )}
       {msg && <Banner tone={msg.tone} title={msg.text} />}
       <Card title="バックアップ（ダウンロード）">
         <Btn tone="primary" onClick={download}>JSONをダウンロード</Btn>
@@ -77,7 +86,7 @@ export default function DataView() {
       {fresh && (
         <Confirm title="空の状態で開始しますか？" confirmLabel="開始する" onCancel={() => setFresh(false)}
           body={<p>破損した保存データを空のデータで置き換えます。元に戻せません。</p>}
-          onConfirm={() => { const r = app.startFresh(); setFresh(false); setMsg(r.ok ? { tone: 'info', text: '空の状態で開始しました。' } : { tone: 'error', text: r.error }); }} />
+          onConfirm={() => { const r = app.startFresh(); setFresh(false); setMsg(r.ok ? { tone: 'info', text: '空の状態で開始しました。破損していた元データは、ブラウザ内に控え（キー adc:corrupt-copy:*）として残してあります。' } : { tone: 'error', text: r.error }); }} />
       )}
     </div>
   );

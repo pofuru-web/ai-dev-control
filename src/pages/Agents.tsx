@@ -3,7 +3,7 @@ import { useApp } from '../state/AppState';
 import { addAgent, deleteAgent, updateAgent, type AgentInput } from '../lib/domain';
 import { KIND_LABEL, ROLE_LABEL, ROLE_ORDER, SELECTABLE_KINDS } from '../lib/labels';
 import type { Agent, AgentKind, AgentRole } from '../types';
-import { Badge, Btn, Card, Empty, Field, Modal, inputCls } from '../ui/kit';
+import { Badge, Btn, Card, Confirm, Empty, Field, Modal, inputCls } from '../ui/kit';
 
 function AgentFields({ v, setV }: { v: AgentInput; setV: (v: AgentInput) => void }) {
   const kinds: AgentKind[] = SELECTABLE_KINDS.includes(v.kind) ? SELECTABLE_KINDS : [...SELECTABLE_KINDS, v.kind];
@@ -51,6 +51,7 @@ export default function Agents() {
   const app = useApp();
   const [v, setV] = useState<AgentInput>({ name: '', kind: 'claude-code-web', roles: ['developer'] });
   const [editing, setEditing] = useState<Agent | null>(null);
+  const [deleting, setDeleting] = useState<Agent | null>(null);
   const [err, setErr] = useState('');
   const ro = app.mode !== 'normal';
   return (
@@ -72,11 +73,16 @@ export default function Agents() {
               </span>
               <span className="flex gap-2">
                 <Btn disabled={ro} onClick={() => setEditing(a)}>編集</Btn>
-                <Btn tone="danger" disabled={ro} onClick={() => { const r = app.run((d) => deleteAgent(d, a.id)); setErr(r.ok ? '' : r.error); }}>削除</Btn>
+                <Btn tone="danger" disabled={ro} onClick={() => setDeleting(a)}>削除</Btn>
               </span>
             </li>
           ))}
         </ul>
+      )}
+      {deleting && (
+        <Confirm title="担当者を削除しますか？" confirmLabel="削除する" onCancel={() => setDeleting(null)}
+          body={<><p>「{deleting.name}」を削除します。</p><p>担当しているタスク {app.data.tasks.filter((t) => t.assigneeAgentId === deleting.id).length} 件は「未割り当て」になります。作業時間の記録がある担当者は削除できません。</p></>}
+          onConfirm={() => { const r = app.run((d) => deleteAgent(d, deleting.id)); setErr(r.ok ? '' : r.error); setDeleting(null); }} />
       )}
       {editing && <EditAgent agent={editing} onClose={() => setEditing(null)} />}
     </div>

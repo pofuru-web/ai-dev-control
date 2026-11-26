@@ -29,12 +29,12 @@ Browser (React SPA)
 
 ## 5. Netlify Function design (`netlify/functions/github-snapshot.ts`)
 - Input: `?repo=owner/name` (validated by regex `^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`) and an optional server-side allow-list of repos (env `ALLOWED_REPOS`; defaults to `pofuru-web/ai-dev-lab-public` when unset) to prevent use as an open proxy.
-- Calls (per_page=30): `GET /repos/{r}`, `GET /repos/{r}/issues?state=all&sort=created&direction=desc`, `GET /repos/{r}/pulls?state=all&sort=created&direction=desc`, `GET /repos/{r}/commits`. Per-PR detail (`GET /pulls/{n}`) only if merged status cannot be derived from list data (see github-integration.md).
+- Calls (per_page=30): `GET /repos/{r}`, `GET /repos/{r}/issues?state=all&sort=created&direction=desc`, `GET /repos/{r}/pulls?state=all&sort=created&direction=desc`, `GET /repos/{r}/commits`. Merged status is derived from the list data (`merged_at`), so no per-PR detail calls are made (see github-integration.md).
 - Output: normalized `GitHubSnapshot` JSON plus `rateLimit {limit, remaining, reset}` taken from response headers, and no partial results: any failed upstream call fails the whole response.
 - Headers: `User-Agent: ai-dev-control`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`; `Authorization` only if env token exists.
-- Conditional requests: forward `If-None-Match` ETag from cache; a 304 does not consume primary rate limit (per GitHub docs, **[UNVERIFIED]** here).
+- Conditional requests (ETag / `If-None-Match`, 304): **not implemented in v0.1** (design idea only; every sync costs 4 upstream calls).
 - Errors: map 403/429 with `x-ratelimit-remaining: 0` to `rate_limited` (with reset time), 404 to `not_found`, others to `upstream_error`. Response is always JSON; never leaks the token or upstream raw bodies containing it.
-- Response cache header `Cache-Control: private, max-age=60`. Timeout 10 s per upstream call.
+- Response header `Cache-Control: no-store` (implemented; the earlier `private, max-age=60` idea was not adopted). Timeout 10 s per upstream call.
 
 ## 6. Frontend flow
 1. User presses "Refresh" (manual only).
@@ -51,7 +51,7 @@ tests/unit (Vitest)   tests/e2e (Playwright)
 
 ## 8. Security notes
 - Token never in `VITE_*` variables (those are bundled). 
-- CORS: function same-origin only.
+- CORS: the function sets no CORS headers (browsers on other origins cannot read responses); it is still callable by any HTTP client, which is why the allow-list matters (see docs/review-v0.1.md).
 - Input validation on `repo`; allow-list; GET-only upstream.
 - localStorage is readable by any script on the origin: store no secrets there.
 

@@ -1,29 +1,17 @@
-# MVP scope and implementation plan
+# MVP scope (v0.1) — status as of Phase 1D
 
-## Adopted (MVP)
-- Project CRUD, Agent list, Task CRUD with status and owner-approval flag.
-- Manual WorkSession entry (human-entered time only).
-- Manual "Refresh from GitHub" per project via Netlify Function: latest 30 Issues / PRs / Commits, issue-PR dedupe, merged flag.
-- Dashboard: per project open tasks, awaiting-owner tasks, last snapshot time, recent PRs/commits.
-- localStorage persistence with atomic write, JSON export/import backup.
-- Error states that preserve existing data.
+This file started as the Phase 0 plan. It now records what v0.1 contains. Details of what is implemented and not: `docs/release-notes-v0.1.md`.
 
-## Deferred
-Automatic polling/monitoring, multi-user auth, any GitHub write, AI-hours estimation from history, webhooks, notifications, GitHub OAuth for private repos, server-side database, Issue/PR comments or diffs.
+## In v0.1 (implemented)
+- Projects (create/edit/delete, GitHub repo setting, status), agents (7 kinds, multiple roles, edit), tasks (6-state kanban, assignee, manual Issue/PR links, explicit owner approval), manual work time (date or start/end, edit, today/week/month/all totals).
+- Manual GET-only GitHub sync through a Netlify Function: latest 30 Issues / PRs / Commits, issue-PR dedupe, merged flag, rate-limit display, old data kept on any failure.
+- localStorage persistence with schema versioning (v2), v1 migration, JSON backup/restore, multi-tab conflict refusal.
+- Japanese dark UI with left navigation; responsive.
 
-## Phase 1 steps (after owner approval)
-1. Scaffold Vite+React+TS, Tailwind, Vitest, Playwright, Netlify config; CI for typecheck/lint/unit.
-2. Implement `types/` from data-model.md; storage layer with atomic write, schemaVersion, tests.
-3. **First close the open verification**: run the real API calls from an unrestricted environment; save sanitized fixtures.
-4. Implement `github-snapshot` function + validation + rate-limit mapping; unit tests with fixtures.
-5. Implement dedupe/merged logic as pure functions; tests.
-6. UI: Projects, Tasks, Sessions, GitHub panel; error banners.
-7. Playwright E2E with mocked function responses; manual test against deploy preview.
-8. Security review: bundle grep for token strings, GET-only check, allow-list.
-9. Owner acceptance, then merge.
+## Not in v0.1
+Automatic sync/monitoring, authentication / multi-user, private repositories, any GitHub write (issues, PRs, merges), paging beyond the latest 30 items, ETag/304, estimating work time from GitHub history, drag and drop on the board, notifications/webhooks, server-side database (Supabase etc.), CSV export.
 
-## Unresolved
-- REST API access/limits unmeasured (see github-integration.md).
-- Whether a server-side token will be provided (private repos are out of scope).
-- Repo allow-list policy and Netlify site/domain.
-- Whether Task<->Issue linking should be automated (currently manual numbers).
+## Open items (owner decisions)
+- Fixes for the findings in `docs/review-v0.1.md` (none applied in Phase 1D by instruction).
+- Whether to set `GITHUB_TOKEN` on Netlify (raises the rate limit from 60/h; not tested).
+- Release approval, PR and tag creation.

@@ -33,7 +33,7 @@ Conclusion: **REST retrieval of Issues / PRs / Commits for the target repo could
 - Commits: key by `sha`; the merge commit and the PR are different entities and are not deduped against each other.
 
 ## 5. Safe fetching via Netlify Functions
-See architecture.md section 5. Summary: GET-only allow-list, repo allow-list, server-side token, ETag, no token or raw upstream error in responses, manual refresh only, previous snapshot kept on error.
+See architecture.md section 5. Summary: GET-only, repo allow-list, server-side token, no token or raw upstream error in responses, manual refresh only, previous snapshot kept on error.
 
 ## 6. Failure handling matrix
 | Condition | Behavior |

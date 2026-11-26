@@ -1,6 +1,6 @@
-# Data model (Phase 0 draft)
+# Data model
 
-All types are design proposals; not implemented or compiled yet.
+> The TypeScript block under "Types" is the **Phase 0 sketch and is superseded**: `Agent.role`, the `GitHubSnapshot` fields and others changed. The authoritative definitions are `src/types/index.ts`, and the current schema (v2) is described in "Phase 1C changes" at the end of this file.
 
 ## Storage separation
 | localStorage key | Content | Owner | On API error |
@@ -109,3 +109,11 @@ Authoritative types: `src/types/index.ts`. `SCHEMA_VERSION = 2`.
 
 ### Approval
 Editing the title, notes, project or Issue/PR links of an approved task revokes approval and returns it to `awaiting_owner`; the form warns first and asks for confirmation. Assignee-only edits keep the approval. GitHub merged state and owner approval are displayed and stored separately.
+
+### Adopted v0.1 policies (decided by the owner after Phase 1C)
+1. An assignee-only change does not revoke an approval.
+2. The legacy agent kind `human` is kept for compatibility.
+3. The revision starts at 0 when v1 data is migrated to v2.
+4. Work records without a date are included only in all-time totals; dates are never guessed.
+
+Owner acceptance of Phase 1C on the deployed site (commit f596c5a, 7/7 items) is recorded in docs/test-plan.md. It did not verify exclusion of two saves at exactly the same instant; that remains a documented limit.

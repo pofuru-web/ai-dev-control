@@ -47,3 +47,11 @@ All unit/integration green, E2E green, typecheck + lint clean, security checks p
 - E2E (Playwright, two tabs in one browser context where needed): cache removed and hidden after repo change; deleted project / changed repo during an in-flight sync; restore purges mismatching cache; approved-task edit flow (warning, confirm, cancel, re-approval); assignee-only edit; agents (new kinds, multiple roles, edit keeps id and links); work-session dates, edit and period switching; two tabs (storage-event path and save-time refusal path); v1 data migration, migration failure (data untouched, raw download), v1 backup restore, newer-schema read-only.
 - Existing tests changed because of the spec: see the Phase 1C report (agent `role`->`roles`, revision in saved data, task card wording for approval/GitHub state).
 - Still not covered: real-browser timing of two tabs saving in the same instant (localStorage is not mutually exclusive across tabs), Web Locks (not used), Chromium only, real Netlify deployment of Phase 1C.
+
+## Owner acceptance of Phase 1C (reported by the owner; not run by Claude Code)
+- Environment: https://deft-halva-0ad17e.netlify.app/ , verified commit `f596c5a` (`f596c5a285ce28f7001f214e9cb87fc273ab1e2b`).
+- Result: all 7 items passed — (1) old data carried over without loss, (2) agent editing and multiple roles, (3) work-time editing and period totals, (4) GitHub re-sync, (5) editing an approved task's content returns it to awaiting approval, (6) JSON backup export, (7) a stale tab's save is refused when another tab holds newer data.
+- Scope note: this does **not** include verification of exclusion for saves made at exactly the same instant from two tabs. That case is not guaranteed (see data-model.md, multi-tab limit) and remains unverified.
+
+## Phase 1D regression baseline
+Vitest 166 and Playwright 29 (Phase 1C) are the baseline; none may be deleted, skipped or loosened. Results of the Phase 1D run are in `docs/release-checklist.md`.

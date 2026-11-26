@@ -20,7 +20,9 @@
 | [docs/user-guide.md](docs/user-guide.md) | 基本操作、バックアップ・復元、競合発生時の対処 |
 | [docs/release-notes-v0.1.md](docs/release-notes-v0.1.md) | 実装済み機能、既知の制約、未実装機能 |
 | [docs/release-checklist.md](docs/release-checklist.md) | リリース前の確認事項 |
-| [docs/review-v0.1.md](docs/review-v0.1.md) | Phase 1D の全体レビュー・セキュリティレビュー結果 |
+| [docs/review-v0.1.md](docs/review-v0.1.md) | 全体レビュー・セキュリティレビュー結果と対応状況 |
+| [docs/function-protection-options.md](docs/function-protection-options.md) / [docs/netlify-cache-verification.md](docs/netlify-cache-verification.md) | 公開 Function の保護策の調査、CDN キャッシュの実環境確認手順、Netlify 管理画面での確認事項 |
+| [docs/release-procedure.md](docs/release-procedure.md) | main への統合・タグ・本番ブランチ・ロールバックの手順案（未実行） |
 | [docs/architecture.md](docs/architecture.md) / [data-model.md](docs/data-model.md) / [github-integration.md](docs/github-integration.md) / [mvp-scope.md](docs/mvp-scope.md) / [test-plan.md](docs/test-plan.md) | 設計・データモデル・GitHub 連携・範囲・テスト計画 |
 
 ## 開発・起動
@@ -72,5 +74,5 @@ npm run test:e2e    # Playwright（ビルドして preview を起動します）
 
 ## セキュリティ上の注意
 
-- Function は認証なしで公開されます。許可リスト外のリポジトリは 403、GitHub への呼び出しは GET のみです。それでも誰でも呼び出せるため、レート制限を消費される可能性があります（docs/review-v0.1.md の指摘 M-4）。
+- Function は認証なしで公開されます。許可リスト外のリポジトリは 403、GitHub への呼び出しは GET のみです。それでも誰でも呼び出せるため、レート制限を消費される可能性があります（指摘 M-4）。Phase 1F で成功応答を Netlify の CDN で 60 秒キャッシュする変更を入れましたが、**アクセス制限の代わりにはならず、Netlify 上の動作は未検証**です（docs/netlify-cache-verification.md）。手動同期でも最大 60 秒古い結果が返ることがあります。
 - トークンはサーバー環境変数のみで扱い、ブラウザには渡りません。

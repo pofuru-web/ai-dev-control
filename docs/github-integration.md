@@ -78,5 +78,9 @@ This confirms, for this one repository: the Netlify Function runs, unauthenticat
 ## 6d. Phase 1B owner acceptance (reported by the owner)
 Netlify deployment https://deft-halva-0ad17e.netlify.app/ at HEAD `81129eca200b27582d373cbfa4c89bae37491551`: 8/8 acceptance items passed, including a real GitHub API sync from the UI. Paging, real-environment error cases and ETag/304 remain unverified.
 
+## 6e. Phase 1E owner acceptance and Phase 1F cache (summary)
+- Phase 1E was accepted by the owner on the deployed site (commit 0824ec9, 8/8 items, including a real manual sync on Node 22). Reported by the owner, not run by Claude Code.
+- Phase 1F adds a 60 s CDN cache for successful sync responses only (errors `no-store`, key = `repo` only). Implemented and unit/integration tested; **not verified on Netlify**. See docs/netlify-cache-verification.md. A manual sync can return data up to 60 s old; `fetchedAt` is the real GitHub fetch time.
+
 ## 7. Open item to close before Phase 1 coding
 Run the 4 calls from an environment with unrestricted GitHub API access (owner's machine or a Netlify deploy preview) and record: counts, headers, `Link` behavior, anonymous limit, PR `merged_at` shape. Section 6c now records the owner's measurement for the target repository; the items listed there as unverified remain open.

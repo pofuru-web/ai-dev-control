@@ -34,7 +34,7 @@ Browser (React SPA)
 - Headers: `User-Agent: ai-dev-control`, `Accept: application/vnd.github+json`, `X-GitHub-Api-Version: 2022-11-28`; `Authorization` only if env token exists.
 - Conditional requests (ETag / `If-None-Match`, 304): **not implemented in v0.1** (design idea only; every sync costs 4 upstream calls).
 - Errors: map 403/429 with `x-ratelimit-remaining: 0` to `rate_limited` (with reset time), 404 to `not_found`, others to `upstream_error`. Response is always JSON; never leaks the token or upstream raw bodies containing it.
-- Response header `Cache-Control: no-store` (implemented; the earlier `private, max-age=60` idea was not adopted). Timeout 10 s per upstream call.
+- Caching (Phase 1F): a successful sync is cacheable at Netlify's CDN for 60 s (`Netlify-CDN-Cache-Control: public, max-age=60`; browsers get `Cache-Control: public, max-age=0, must-revalidate`); every error and 405 is `no-store`; all responses carry `Netlify-Vary: query=repo` so the cache key is the `repo` parameter only. A cache hit is served by the CDN **without running the function**, so the allow-list is not consulted for hits (bounded by the 60 s TTL; deploys drop cached responses). The cache is not access control or authentication. Details and the verification procedure: docs/netlify-cache-verification.md. **Live behaviour on Netlify is unverified.** Timeout 10 s per upstream call.
 
 ## 6. Frontend flow
 1. User presses "Refresh" (manual only).

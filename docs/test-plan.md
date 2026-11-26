@@ -71,5 +71,17 @@ All unit/integration green, E2E green, typecheck + lint clean, security checks p
 8. 不正なバックアップ（ID を重複させた JSON など）を復元しようとすると拒否され、データが変わらない。
 9. （任意・要注意）破損データの動作は、必ず事前バックアップを取った上でテスト用ブラウザで確認。
 
+## Owner acceptance of Phase 1E (reported by the owner; not run by Claude Code)
+- Environment: https://deft-halva-0ad17e.netlify.app/ , verified commit `0824ec9` (`0824ec9625e97ed7c506952a6850280f4526afa2`).
+- Result: all 8 items passed — (1) saving an old-version JSON backup, (2) successful deploy and Node 22, (3) existing data kept, (4) manual GitHub sync, (5) project move blocked for a task with work sessions, (6) repository change: confirmation, link removal, approval revocation, (7) delete confirmations for agents and work sessions, (8) restore of a backup with duplicate IDs refused.
+- **Not included in this acceptance:** the optional corrupt-data test, and a test of exclusion for saves at exactly the same instant (still unverified).
+
+## Phase 1F additions
+- Integration (`tests/integration/cache-headers.test.ts`, 21 tests): success response carries `Netlify-CDN-Cache-Control: public, max-age=60`, revalidating browser `Cache-Control`, `Netlify-Vary: query=repo`; body format unchanged; 10 error kinds (400/403/404/429/502/504 incl. invalid input, allow-list, private repo, malformed data, timeout, network) all `no-store` with the same Vary; POST/PUT/PATCH/DELETE/HEAD/OPTIONS are 405, uncacheable and never reach GitHub; input/allow-list checks precede any GitHub call; different repositories give separately labelled responses; the token is in no body/header.
+- E2E (`tests/e2e/phase1f.spec.ts`, 3 tests): Issue/PR placeholders are examples ("例：1", "例：2") and the optional/unlinked hints are shown in new and edit dialogs; empty fields link nothing and a real value replaces the placeholder; the sync page explains the possible 60 s cache.
+- Mutation check (manual): making errors cacheable, dropping `Netlify-Vary`, or lengthening the TTL makes the new tests fail.
+- Existing tests: none edited or removed (Vitest 219 and Playwright 48 unchanged and passing).
+- Not covered: the real Netlify CDN behaviour (hit/miss, key handling, error caching, allow-list after a change) — see docs/netlify-cache-verification.md for the owner's procedure; Netlify plan, quota and cost facts.
+
 ## Phase 1D regression baseline
 Vitest 166 and Playwright 29 (Phase 1C) are the baseline; none may be deleted, skipped or loosened. Results of the Phase 1D run are in `docs/release-checklist.md`.

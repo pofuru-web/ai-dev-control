@@ -50,8 +50,8 @@ function TaskForm({ initial, defaultProject, onClose }: { initial?: Task; defaul
           </select>
         </Field>
         <div className="grid grid-cols-2 gap-3">
-          <Field label="Issue番号（手動紐付け）"><input className={inputCls} inputMode="numeric" value={v.issueNumber} onChange={(e) => setV({ ...v, issueNumber: e.target.value })} placeholder="1" /></Field>
-          <Field label="PR番号（手動紐付け）"><input className={inputCls} inputMode="numeric" value={v.prNumber} onChange={(e) => setV({ ...v, prNumber: e.target.value })} placeholder="2" /></Field>
+          <Field label="Issue番号（手動紐付け）" hint="任意。未入力ならIssueとは紐付けされません。"><input className={inputCls} inputMode="numeric" value={v.issueNumber} onChange={(e) => setV({ ...v, issueNumber: e.target.value })} placeholder="例：1" /></Field>
+          <Field label="PR番号（手動紐付け）" hint="任意。未入力ならPRとは紐付けされません。"><input className={inputCls} inputMode="numeric" value={v.prNumber} onChange={(e) => setV({ ...v, prNumber: e.target.value })} placeholder="例：2" /></Field>
         </div>
         {error && <p role="alert" className="text-sm text-rose-300">{error}</p>}
         <div className="flex justify-end gap-2"><Btn onClick={onClose}>キャンセル</Btn><Btn tone="primary" onClick={submit}>保存</Btn></div>

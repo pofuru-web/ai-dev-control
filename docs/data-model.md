@@ -117,6 +117,15 @@ Editing the title, notes, project or Issue/PR links of an approved task revokes 
 - **Recovery after a bad write** (`storage.ts`): before writing back, the stored value is re-read. A valid value that is not ours (another tab saved) is never overwritten (`skipped_newer_value`); an unreadable value is never overwritten blindly (`skipped_unreadable`); a first-save value is not removed if it is another tab's. A re-check right before the main write (after the prev copy) narrows the window further and the prev copy is skipped when unchanged. **None of this is atomic: it remains check-then-write, so a save landing between the check and the write is still possible. Exclusion is not guaranteed.**
 - **Corrupt value protection**: before a corrupt/unloadable main value is replaced (start fresh, restore, or any save), a raw copy is written to `adc:corrupt-copy:<n>` (never overwritten, never deleted by the app). If the copy cannot be written the value is not replaced (`corrupt_backup_failed`). There is no screen to download these copies yet (a known limitation).
 
+### Phase 1E policies — recommended by the development manager, **final owner approval pending**
+1. Setting a repository on a project that had none keeps the Issue/PR numbers already entered.
+2. Removing a project's repository clears the links.
+3. When another tab's save is detected, editing in this tab stops.
+4. The Node version is specified only through `.nvmrc`.
+5. No dedicated screen for downloading the raw copies of corrupt data (`adc:corrupt-copy:*`) is added in v0.1.
+
+Owner acceptance of Phase 1E on the deployed site (commit 0824ec9, 8/8 items) is recorded in docs/test-plan.md; the optional corrupt-data test and the exact-same-instant save exclusion test were not part of it.
+
 ### Adopted v0.1 policies (decided by the owner after Phase 1C)
 1. An assignee-only change does not revoke an approval.
 2. The legacy agent kind `human` is kept for compatibility.

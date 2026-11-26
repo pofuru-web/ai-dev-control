@@ -30,7 +30,7 @@ export default function GitHubView() {
           {st.status === 'syncing' ? '同期中' : st.status === 'failed' ? '同期失敗' : snap ? '同期済み' : '未取得'}
         </span>
       </div>
-      <p className="text-xs text-slate-500">GitHubへは読み取り（GET）のみ行います。自動同期はありません。</p>
+      <p className="text-xs text-slate-500">GitHubへは読み取り（GET）のみ行います。自動同期はありません。同期結果はサーバー側で最大60秒キャッシュされることがあるため、直前に同期した場合は「最終取得日時」が更新されないことがあります（その場合は60秒ほど待ってから再度同期してください）。</p>
       {st.status === 'failed' && st.error && (
         <Banner tone="error" title="同期に失敗しました">
           <p data-testid="sync-error">{ERROR_TEXT[st.error.code] ?? st.error.message}{st.error.resetAt ? `（リセット: ${fmtDateTime(st.error.resetAt)}）` : ''}</p>
@@ -40,7 +40,7 @@ export default function GitHubView() {
       {!snap ? <Empty>まだデータを取得していません。</Empty> : (
         <>
           <div className="grid gap-3 sm:grid-cols-3">
-            <Card><div className="text-xs text-slate-400">最終取得日時</div><div data-testid="fetched-at" className="font-medium">{fmtDateTime(snap.fetchedAt)}</div></Card>
+            <Card><div className="text-xs text-slate-400">最終取得日時（GitHubから取得した時刻）</div><div data-testid="fetched-at" className="font-medium">{fmtDateTime(snap.fetchedAt)}</div></Card>
             <Card><div className="text-xs text-slate-400">API残量（取得時点）</div><div data-testid="rate-limit" className="font-medium">{snap.rateLimit ? `${snap.rateLimit.remaining} / ${snap.rateLimit.limit}` : '不明'}</div>{snap.rateLimit && <div className="text-xs text-slate-500">リセット {fmtDateTime(snap.rateLimit.resetAt)}</div>}</Card>
             <Card><div className="text-xs text-slate-400">取得件数</div><div className="font-medium">Issue {snap.issues.length} / PR {snap.pulls.length} / Commit {snap.commits.length}</div></Card>
           </div>
